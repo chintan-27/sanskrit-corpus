@@ -8,6 +8,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from indic_transliteration import sanscript
+
 from .manifest import append_jsonl
 from .sources import build_sources
 
@@ -27,6 +29,12 @@ class ProcessResult:
 def normalize_text(text: str) -> str:
     normalized = unicodedata.normalize("NFC", text)
     return " ".join(normalized.replace("\ufeff", "").split())
+
+
+def transliterate_iast_to_devanagari(text: str) -> str:
+    # UD Vedic uses ḷ for the retroflex lateral in forms like īḷe; sanscript expects ḻ.
+    vedic_lateral_normalized = text.replace("ḷ", "ḻ").replace("Ḷ", "Ḻ")
+    return normalize_text(sanscript.transliterate(vedic_lateral_normalized, sanscript.IAST, sanscript.DEVANAGARI))
 
 
 def process_sources(root: Path, source_id: str = "all", force: bool = False, limit: int | None = None) -> list[ProcessResult]:
@@ -125,9 +133,10 @@ def process_ud_sanskrit_vedic(root: Path, force: bool = False, limit: int | None
             continue
         rows = []
         for sentence in _read_conllu_sentences(path):
-            text = normalize_text(sentence.get("text", ""))
-            if not text:
+            text_latn = normalize_text(sentence.get("text", ""))
+            if not text_latn:
                 continue
+            text = transliterate_iast_to_devanagari(text_latn)
             count += 1
             sent_id = sentence.get("sent_id", str(count))
             rows.append(
@@ -137,12 +146,14 @@ def process_ud_sanskrit_vedic(root: Path, force: bool = False, limit: int | None
                     "record_type": "treebank_sentence",
                     "split": split,
                     "text": text,
-                    "text_lang": "sa-Latn",
+                    "text_lang": "sa-Deva",
+                    "text_latn": text_latn,
+                    "text_latn_scheme": "IAST",
                     "sent_id": sent_id,
                     "citation_text": sentence.get("citation_text"),
                     "citation_chapter": sentence.get("citation_chapter"),
                     "source_path": path.name,
-                    "normalization": ["unicode_nfc", "whitespace_squeeze"],
+                    "normalization": ["unicode_nfc", "whitespace_squeeze", "iast_to_devanagari"],
                     **metadata,
                 }
             )

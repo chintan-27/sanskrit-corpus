@@ -1,11 +1,15 @@
 import json
 from pathlib import Path
 
-from sanskrit_corpus.processing import normalize_text, process_sources
+from sanskrit_corpus.processing import normalize_text, process_sources, transliterate_iast_to_devanagari
 
 
 def test_normalize_text() -> None:
     assert normalize_text("  श्री\uFEFF  रामः\n") == "श्री रामः"
+
+
+def test_transliterate_iast_to_devanagari_handles_vedic_lateral() -> None:
+    assert transliterate_iast_to_devanagari("agnim īḷe") == "अग्निम् ईळे"
 
 
 def test_process_itihasa_fixture(tmp_path: Path) -> None:
@@ -48,7 +52,9 @@ def test_process_ud_fixture(tmp_path: Path) -> None:
 
     assert result.record_count == 1
     assert row["sent_id"] == "rv-1"
-    assert row["text_lang"] == "sa-Latn"
+    assert row["text"] == "अग्निम् ईळे"
+    assert row["text_lang"] == "sa-Deva"
+    assert row["text_latn"] == "agnim īḷe"
 
 
 def test_process_naamah_fixture(tmp_path: Path) -> None:
