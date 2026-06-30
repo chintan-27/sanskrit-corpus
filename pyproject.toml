@@ -1,0 +1,23 @@
+[project]
+name = "sanskrit-corpus"
+version = "0.1.0"
+description = "Local-first acquisition tools for a traceable Sanskrit corpus."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+sanskrit-corpus = "sanskrit_corpus.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
