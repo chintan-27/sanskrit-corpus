@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .manifest import append_jsonl, ensure_manifest_dir, write_source_registry
 from .processing import process_sources
+from .reporting import write_report
 from .sources import PullContext, build_sources
 
 
@@ -27,6 +28,9 @@ def build_parser() -> argparse.ArgumentParser:
     process.add_argument("--limit", type=int, help="Maximum records to emit per source.")
     process.add_argument("--force", action="store_true", help="Replace existing processed JSONL files.")
     process.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
+
+    report = subparsers.add_parser("report", help="Write a local corpus acquisition summary.")
+    report.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
 
     return parser
 
@@ -66,6 +70,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_pull(args)
     if args.command == "process":
         return run_process(args)
+    if args.command == "report":
+        return run_report(args)
     parser.error(f"unsupported command {args.command}")
     return 2
 
@@ -78,6 +84,12 @@ def run_process(args: argparse.Namespace) -> int:
         if result.error:
             print(f"         {result.error}")
     return 1 if any(result.status == "failed" for result in results) else 0
+
+
+def run_report(args: argparse.Namespace) -> int:
+    path = write_report(Path(args.root).resolve())
+    print(f"ok       report -> {path}")
+    return 0
 
 
 if __name__ == "__main__":

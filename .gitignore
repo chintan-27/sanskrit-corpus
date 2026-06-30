@@ -4,6 +4,7 @@ data/raw/
 data/processed/
 data/releases/
 data/manifests/
+data/reports/
 
 .venv/
 __pycache__/
