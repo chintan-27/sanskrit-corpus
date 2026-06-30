@@ -7,6 +7,7 @@ def test_unclear_sources_are_not_releasable() -> None:
     assert sources["kaggle_sanskrit_text_corpus"].record.release_status == "needs_audit"
     assert sources["aikosh_sanskrit_post_ocr"].record.release_status == "needs_audit"
     assert sources["github_oliverhellwig"].record.release_status == "needs_audit"
+    assert sources["gretil_sanskrit"].record.release_status == "needs_audit"
 
 
 def test_synthetic_source_is_quarantined() -> None:

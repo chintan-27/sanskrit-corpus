@@ -6,6 +6,7 @@ import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -169,6 +170,33 @@ class HuggingFaceDatasetSource(BaseSource):
         local_path.write_bytes(fetch_bytes(url))
 
 
+class ZipArchiveSource(BaseSource):
+    def __init__(self, record: SourceRecord, archive_url: str, archive_name: str) -> None:
+        self.record = record
+        self.archive_url = archive_url
+        self.archive_name = archive_name
+
+    def pull(self, context: PullContext) -> PullRunRecord:
+        target = self._target_dir(context)
+        if context.dry_run:
+            return PullRunRecord(self.record.source_id, "planned", utc_now(), str(target), 0, 0, "", sample=context.sample)
+        if target.exists():
+            if not context.force:
+                return self._success_record(target, context.sample)
+            shutil.rmtree(target)
+        target.mkdir(parents=True, exist_ok=True)
+        try:
+            archive_path = target / self.archive_name
+            archive_path.write_bytes(fetch_bytes(self.archive_url, timeout=300))
+            extracted_dir = target / "extracted"
+            extracted_dir.mkdir(exist_ok=True)
+            with zipfile.ZipFile(archive_path) as archive:
+                archive.extractall(extracted_dir)
+            return self._success_record(target, context.sample)
+        except Exception as exc:
+            return self._failed_record(target, exc, context.sample)
+
+
 def build_sources() -> dict[str, BaseSource]:
     sources: list[BaseSource] = [
         HuggingFaceDatasetSource(
@@ -235,6 +263,20 @@ def build_sources() -> dict[str, BaseSource]:
                 "DCS-associated Sanskrit repository; audit repo license and source terms before release.",
             ),
             "https://github.com/OliverHellwig/sanskrit.git",
+        ),
+        ZipArchiveSource(
+            SourceRecord(
+                "gretil_sanskrit",
+                "GRETIL Sanskrit cumulative download",
+                "https://gretil.sub.uni-goettingen.de/gretil.html",
+                "text_archive",
+                "zip_download",
+                "needs_audit",
+                "needs_audit",
+                "Cumulative Sanskrit archive; item-level source and license audit required before release.",
+            ),
+            "https://gretil.sub.uni-goettingen.de/gretil/1_sanskr.zip",
+            "1_sanskr.zip",
         ),
         UnavailableSource(
             SourceRecord(
