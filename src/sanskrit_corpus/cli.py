@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from .manifest import append_jsonl, ensure_manifest_dir, write_source_registry
+from .processing import process_sources
 from .sources import PullContext, build_sources
 
 
@@ -20,6 +21,11 @@ def build_parser() -> argparse.ArgumentParser:
     pull.add_argument("--dry-run", action="store_true", help="List planned sources without downloading.")
     pull.add_argument("--force", action="store_true", help="Replace existing local source directories.")
     pull.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
+
+    process = subparsers.add_parser("process", help="Normalize pulled raw sources into data/processed JSONL.")
+    process.add_argument("--source", default="all", help="Source id to process, or 'all'.")
+    process.add_argument("--force", action="store_true", help="Replace existing processed JSONL files.")
+    process.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
 
     return parser
 
@@ -57,8 +63,20 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "pull":
         return run_pull(args)
+    if args.command == "process":
+        return run_process(args)
     parser.error(f"unsupported command {args.command}")
     return 2
+
+
+def run_process(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    results = process_sources(root, source_id=args.source, force=args.force)
+    for result in results:
+        print(f"{result.status:8} {result.source_id} -> {result.output_path} ({result.record_count} records)")
+        if result.error:
+            print(f"         {result.error}")
+    return 1 if any(result.status == "failed" for result in results) else 0
 
 
 if __name__ == "__main__":
