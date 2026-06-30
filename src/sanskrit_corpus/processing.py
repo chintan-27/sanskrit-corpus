@@ -29,11 +29,12 @@ def normalize_text(text: str) -> str:
     return " ".join(normalized.replace("\ufeff", "").split())
 
 
-def process_sources(root: Path, source_id: str = "all", force: bool = False) -> list[ProcessResult]:
+def process_sources(root: Path, source_id: str = "all", force: bool = False, limit: int | None = None) -> list[ProcessResult]:
     processors = {
         "itihasa": process_itihasa,
         "ud_sanskrit_vedic": process_ud_sanskrit_vedic,
         "naamah": process_naamah,
+        "samhitika_0_0_1": process_samhitika,
     }
     selected = list(processors) if source_id == "all" else [source_id]
     results: list[ProcessResult] = []
@@ -43,7 +44,7 @@ def process_sources(root: Path, source_id: str = "all", force: bool = False) -> 
             results.append(ProcessResult(selected_id, "skipped", "", 0, "no processor is available for this source"))
             continue
         try:
-            results.append(processor(root, force=force))
+            results.append(processor(root, force=force, limit=limit))
         except Exception as exc:
             results.append(ProcessResult(selected_id, "failed", "", 0, str(exc)))
     return results
@@ -67,7 +68,7 @@ def _source_metadata(source_id: str) -> dict[str, str]:
     }
 
 
-def process_itihasa(root: Path, force: bool = False) -> ProcessResult:
+def process_itihasa(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
     source_id = "itihasa"
     raw_dir = root / "data" / "raw" / source_id
     output = _output_path(root, source_id, force)
@@ -103,12 +104,15 @@ def process_itihasa(root: Path, force: bool = False) -> ProcessResult:
                         **metadata,
                     }
                 )
+                if limit is not None and count >= limit:
+                    append_jsonl(output, rows)
+                    return ProcessResult(source_id, "ok", str(output), count)
         append_jsonl(output, rows)
 
     return ProcessResult(source_id, "ok", str(output), count)
 
 
-def process_ud_sanskrit_vedic(root: Path, force: bool = False) -> ProcessResult:
+def process_ud_sanskrit_vedic(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
     source_id = "ud_sanskrit_vedic"
     raw_dir = root / "data" / "raw" / source_id
     output = _output_path(root, source_id, force)
@@ -142,6 +146,9 @@ def process_ud_sanskrit_vedic(root: Path, force: bool = False) -> ProcessResult:
                     **metadata,
                 }
             )
+            if limit is not None and count >= limit:
+                append_jsonl(output, rows)
+                return ProcessResult(source_id, "ok", str(output), count)
         append_jsonl(output, rows)
 
     return ProcessResult(source_id, "ok", str(output), count)
@@ -164,7 +171,7 @@ def _read_conllu_sentences(path: Path) -> Iterable[dict[str, str]]:
             yield current
 
 
-def process_naamah(root: Path, force: bool = False) -> ProcessResult:
+def process_naamah(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
     source_id = "naamah"
     raw_path = root / "data" / "raw" / source_id / "Sanskrit_NER_Silver_v1.jsonl"
     output = _output_path(root, source_id, force)
@@ -198,6 +205,51 @@ def process_naamah(root: Path, force: bool = False) -> ProcessResult:
             if len(rows) >= 5000:
                 append_jsonl(output, rows)
                 rows = []
+            if limit is not None and count >= limit:
+                append_jsonl(output, rows)
+                return ProcessResult(source_id, "ok", str(output), count)
+    append_jsonl(output, rows)
+
+    return ProcessResult(source_id, "ok", str(output), count)
+
+
+def process_samhitika(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
+    import pyarrow.parquet as pq
+
+    source_id = "samhitika_0_0_1"
+    raw_path = root / "data" / "raw" / source_id / "translations.parquet"
+    output = _output_path(root, source_id, force)
+    metadata = _source_metadata(source_id)
+    count = 0
+    rows = []
+
+    parquet = pq.ParquetFile(raw_path)
+    for batch in parquet.iter_batches(columns=["bookcorpus_id", "text"], batch_size=5000):
+        payload = batch.to_pydict()
+        for bookcorpus_id, text_value in zip(payload["bookcorpus_id"], payload["text"]):
+            text = normalize_text(text_value or "")
+            if not text:
+                continue
+            count += 1
+            rows.append(
+                {
+                    "record_id": f"{source_id}:{bookcorpus_id if bookcorpus_id is not None else count}",
+                    "source_id": source_id,
+                    "record_type": "synthetic_translation",
+                    "text": text,
+                    "text_lang": "sa",
+                    "bookcorpus_id": bookcorpus_id,
+                    "source_path": raw_path.name,
+                    "normalization": ["unicode_nfc", "whitespace_squeeze"],
+                    **metadata,
+                }
+            )
+            if len(rows) >= 5000:
+                append_jsonl(output, rows)
+                rows = []
+            if limit is not None and count >= limit:
+                append_jsonl(output, rows)
+                return ProcessResult(source_id, "ok", str(output), count)
     append_jsonl(output, rows)
 
     return ProcessResult(source_id, "ok", str(output), count)

@@ -23,6 +23,18 @@ def test_process_itihasa_fixture(tmp_path: Path) -> None:
     assert row["translation"] == "Dharma"
 
 
+def test_process_limit(tmp_path: Path) -> None:
+    raw = tmp_path / "data" / "raw" / "itihasa"
+    raw.mkdir(parents=True)
+    (raw / "train.sn.csv").write_text("एकम्\nद्वे\n", encoding="utf-8")
+    (raw / "train.en.csv").write_text("One\nTwo\n", encoding="utf-8")
+
+    result = process_sources(tmp_path, "itihasa", force=True, limit=1)[0]
+
+    assert result.record_count == 1
+    assert len((tmp_path / "data" / "processed" / "itihasa.jsonl").read_text(encoding="utf-8").splitlines()) == 1
+
+
 def test_process_ud_fixture(tmp_path: Path) -> None:
     raw = tmp_path / "data" / "raw" / "ud_sanskrit_vedic"
     raw.mkdir(parents=True)

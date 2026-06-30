@@ -24,6 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     process = subparsers.add_parser("process", help="Normalize pulled raw sources into data/processed JSONL.")
     process.add_argument("--source", default="all", help="Source id to process, or 'all'.")
+    process.add_argument("--limit", type=int, help="Maximum records to emit per source.")
     process.add_argument("--force", action="store_true", help="Replace existing processed JSONL files.")
     process.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
 
@@ -71,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def run_process(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
-    results = process_sources(root, source_id=args.source, force=args.force)
+    results = process_sources(root, source_id=args.source, force=args.force, limit=args.limit)
     for result in results:
         print(f"{result.status:8} {result.source_id} -> {result.output_path} ({result.record_count} records)")
         if result.error:
