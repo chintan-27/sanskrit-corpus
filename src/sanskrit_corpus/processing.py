@@ -4,6 +4,7 @@ import csv
 import json
 import sys
 import unicodedata
+import xml.etree.ElementTree as ET
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +44,7 @@ def process_sources(root: Path, source_id: str = "all", force: bool = False, lim
         "ud_sanskrit_vedic": process_ud_sanskrit_vedic,
         "naamah": process_naamah,
         "samhitika_0_0_1": process_samhitika,
+        "gretil_sanskrit": process_gretil_sanskrit,
     }
     selected = list(processors) if source_id == "all" else [source_id]
     results: list[ProcessResult] = []
@@ -264,3 +266,76 @@ def process_samhitika(root: Path, force: bool = False, limit: int | None = None)
     append_jsonl(output, rows)
 
     return ProcessResult(source_id, "ok", str(output), count)
+
+
+def process_gretil_sanskrit(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
+    source_id = "gretil_sanskrit"
+    raw_dir = root / "data" / "raw" / source_id / "extracted" / "1_sanskr" / "tei"
+    output = _output_path(root, source_id, force)
+    metadata = _source_metadata(source_id)
+    count = 0
+    rows = []
+
+    for xml_path in sorted(raw_dir.glob("*.xml")):
+        record = _read_gretil_tei(xml_path)
+        if record is None:
+            continue
+        count += 1
+        text_latn = normalize_text(record["text_latn"])
+        rows.append(
+            {
+                "record_id": f"{source_id}:{xml_path.stem}",
+                "source_id": source_id,
+                "record_type": "tei_document",
+                "title": record.get("title"),
+                "text": transliterate_iast_to_devanagari(text_latn),
+                "text_lang": "sa-Deva",
+                "text_latn": text_latn,
+                "text_latn_scheme": "IAST",
+                "source_path": str(xml_path.relative_to(root / "data" / "raw" / source_id)),
+                "normalization": ["unicode_nfc", "whitespace_squeeze", "tei_body_itertext", "iast_to_devanagari"],
+                **metadata,
+            }
+        )
+        if len(rows) >= 100:
+            append_jsonl(output, rows)
+            rows = []
+        if limit is not None and count >= limit:
+            append_jsonl(output, rows)
+            return ProcessResult(source_id, "ok", str(output), count)
+    append_jsonl(output, rows)
+
+    return ProcessResult(source_id, "ok", str(output), count)
+
+
+def _read_gretil_tei(path: Path) -> dict[str, str] | None:
+    ns = {"tei": "http://www.tei-c.org/ns/1.0"}
+    try:
+        root = ET.parse(path).getroot()
+    except ET.ParseError:
+        return None
+
+    title_el = root.find(".//tei:titleStmt/tei:title", ns)
+    body_el = root.find(".//tei:text/tei:body", ns)
+    if body_el is None:
+        return None
+
+    text_latn = normalize_text(" ".join(_tei_text_parts(body_el)))
+    if not text_latn:
+        return None
+    return {
+        "title": normalize_text(title_el.text or "") if title_el is not None else path.stem,
+        "text_latn": text_latn,
+    }
+
+
+def _tei_text_parts(element: ET.Element) -> Iterable[str]:
+    tag = element.tag.rsplit("}", 1)[-1]
+    if tag in {"head", "note"}:
+        return
+    if element.text and element.text.strip():
+        yield element.text
+    for child in element:
+        yield from _tei_text_parts(child)
+        if child.tail and child.tail.strip():
+            yield child.tail

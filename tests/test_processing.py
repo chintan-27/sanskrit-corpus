@@ -71,3 +71,28 @@ def test_process_naamah_fixture(tmp_path: Path) -> None:
     assert result.record_count == 1
     assert row["record_type"] == "ner_sentence"
     assert row["tokens"] == ["रामः", "गच्छति"]
+
+
+def test_process_gretil_tei_fixture(tmp_path: Path) -> None:
+    raw = tmp_path / "data" / "raw" / "gretil_sanskrit" / "extracted" / "1_sanskr" / "tei"
+    raw.mkdir(parents=True)
+    (raw / "sa_test.xml").write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<TEI xmlns="http://www.tei-c.org/ns/1.0">
+  <teiHeader><fileDesc><titleStmt><title>Test Text</title></titleStmt></fileDesc></teiHeader>
+  <text><body><head>English Header</head><p>agnim īḷe purohitaṃ</p><note>agnim īḷe duplicate</note></body></text>
+</TEI>
+""",
+        encoding="utf-8",
+    )
+
+    result = process_sources(tmp_path, "gretil_sanskrit", force=True)[0]
+    row = json.loads((tmp_path / "data" / "processed" / "gretil_sanskrit.jsonl").read_text(encoding="utf-8"))
+
+    assert result.record_count == 1
+    assert row["release_status"] == "needs_audit"
+    assert row["title"] == "Test Text"
+    assert row["text"] == "अग्निम् ईळे पुरोहितं"
+    assert row["text_latn"] == "agnim īḷe purohitaṃ"
+    assert "English Header" not in row["text_latn"]
+    assert "duplicate" not in row["text_latn"]
