@@ -264,6 +264,32 @@ def build_sources() -> dict[str, BaseSource]:
             ),
             "https://github.com/OliverHellwig/sanskrit.git",
         ),
+        GitSource(
+            SourceRecord(
+                "sarit_corpus",
+                "sarit/SARIT-corpus",
+                "https://github.com/sarit/SARIT-corpus",
+                "tei_corpus",
+                "git_clone",
+                "needs_audit",
+                "needs_audit",
+                "Scholarly Indic TEI corpus; audit per-file license and headers before release.",
+            ),
+            "https://github.com/sarit/SARIT-corpus.git",
+        ),
+        GitSource(
+            SourceRecord(
+                "saamayik",
+                "ayushbits/saamayik",
+                "https://github.com/ayushbits/saamayik",
+                "parallel_corpus",
+                "git_clone",
+                "needs_audit",
+                "needs_audit",
+                "English-Sanskrit modern prose translation dataset; audit repository license before release.",
+            ),
+            "https://github.com/ayushbits/saamayik.git",
+        ),
         ZipArchiveSource(
             SourceRecord(
                 "gretil_sanskrit",

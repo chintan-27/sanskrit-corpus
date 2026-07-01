@@ -8,6 +8,8 @@ def test_unclear_sources_are_not_releasable() -> None:
     assert sources["aikosh_sanskrit_post_ocr"].record.release_status == "needs_audit"
     assert sources["github_oliverhellwig"].record.release_status == "needs_audit"
     assert sources["gretil_sanskrit"].record.release_status == "needs_audit"
+    assert sources["sarit_corpus"].record.release_status == "needs_audit"
+    assert sources["saamayik"].record.release_status == "needs_audit"
 
 
 def test_synthetic_source_is_quarantined() -> None:
