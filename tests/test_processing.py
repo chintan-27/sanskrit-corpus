@@ -2,7 +2,7 @@ import json
 import bz2
 from pathlib import Path
 
-from sanskrit_corpus.processing import clean_wikitext, normalize_text, process_sources, transliterate_iast_to_devanagari
+from sanskrit_corpus.processing import clean_html_text, clean_wikitext, normalize_text, process_sources, transliterate_iast_to_devanagari
 
 
 def test_normalize_text() -> None:
@@ -152,3 +152,23 @@ def test_process_github_oliverhellwig_fixture(tmp_path: Path) -> None:
     assert row["title"] == "Test Work"
     assert row["chapter"] == "1"
     assert row["text"] == "अग्निम् ईळे पुरोहितं"
+
+
+def test_process_single_html_fixture(tmp_path: Path) -> None:
+    raw = tmp_path / "data" / "raw" / "learnsanskrit_grammar"
+    raw.mkdir(parents=True)
+    (raw / "grammar.html").write_text(
+        "<html><body><nav>Search</nav><h1>Sanskrit Grammar</h1><p>Cases and sandhi are important.</p></body></html>",
+        encoding="utf-8",
+    )
+
+    result = process_sources(tmp_path, "learnsanskrit_grammar", force=True)[0]
+    row = json.loads((tmp_path / "data" / "processed" / "learnsanskrit_grammar.jsonl").read_text(encoding="utf-8"))
+
+    assert result.record_count == 1
+    assert row["release_status"] == "needs_audit"
+    assert "Sanskrit Grammar" in row["text"]
+
+
+def test_clean_html_text_removes_scripts() -> None:
+    assert clean_html_text("<script>bad()</script><p>रामः पठति</p>") == "रामः पठति"

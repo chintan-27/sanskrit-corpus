@@ -9,6 +9,7 @@ import unicodedata
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
 from dataclasses import dataclass
+from html import unescape
 from pathlib import Path
 
 from indic_transliteration import sanscript
@@ -52,6 +53,8 @@ def process_sources(root: Path, source_id: str = "all", force: bool = False, lim
         "sanskrit_wikipedia": process_sanskrit_wikipedia,
         "sanskrit_wikisource": process_sanskrit_wikisource,
         "github_oliverhellwig": process_github_oliverhellwig,
+        "gyaandweep_shabdkosha": process_gyaandweep_shabdkosha,
+        "learnsanskrit_grammar": process_learnsanskrit_grammar,
     }
     selected = list(processors) if source_id == "all" else [source_id]
     results: list[ProcessResult] = []
@@ -464,6 +467,65 @@ def _read_dcs_file_metadata(path: Path) -> tuple[str | None, str | None]:
             elif line.startswith("## chapter:"):
                 chapter = normalize_text(line.split(":", 1)[1])
     return title, chapter
+
+
+def process_gyaandweep_shabdkosha(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
+    return _process_single_html_page(root, "gyaandweep_shabdkosha", "shabdkosha.html", "web_lexicon_page", limit, force)
+
+
+def process_learnsanskrit_grammar(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
+    return _process_single_html_page(root, "learnsanskrit_grammar", "grammar.html", "web_grammar_page", limit, force)
+
+
+def _process_single_html_page(
+    root: Path,
+    source_id: str,
+    file_name: str,
+    record_type: str,
+    limit: int | None,
+    force: bool,
+) -> ProcessResult:
+    raw_path = root / "data" / "raw" / source_id / file_name
+    output = _output_path(root, source_id, force)
+    metadata = _source_metadata(source_id)
+    text = clean_html_text(raw_path.read_text(encoding="utf-8", errors="ignore"))
+    if limit == 0 or not text:
+        return ProcessResult(source_id, "ok", str(output), 0)
+    append_jsonl(
+        output,
+        [
+            {
+                "record_id": f"{source_id}:{file_name}",
+                "source_id": source_id,
+                "record_type": record_type,
+                "text": text,
+                "text_lang": "mixed",
+                "source_path": file_name,
+                "normalization": ["unicode_nfc", "html_tag_strip", "whitespace_squeeze"],
+                **metadata,
+            }
+        ],
+    )
+    return ProcessResult(source_id, "ok", str(output), 1)
+
+
+def clean_html_text(html: str) -> str:
+    html = re.sub(r"(?is)<script\b.*?</script>|<style\b.*?</style>|<svg\b.*?</svg>", " ", html)
+    html = re.sub(r"(?is)<br\s*/?>|</p>|</div>|</li>|</h[1-6]>", "\n", html)
+    text = re.sub(r"(?is)<[^>]+>", " ", html)
+    text = unescape(text)
+    lines = [normalize_text(line) for line in text.splitlines()]
+    lines = [line for line in lines if line and not _is_navigation_noise(line)]
+    return normalize_text("\n".join(lines))
+
+
+def _is_navigation_noise(line: str) -> bool:
+    lowered = line.lower()
+    if lowered in {"search", "sign in", "logout", "saved", "languages", "whatsapp", "facebook", "twitter", "telegram", "reddit"}:
+        return True
+    if len(line) < 3:
+        return True
+    return False
 
 
 def _process_mediawiki_dump(
