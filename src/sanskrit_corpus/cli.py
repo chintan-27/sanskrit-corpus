@@ -4,6 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from .exporting import export_profile, write_audit
 from .manifest import append_jsonl, ensure_manifest_dir, write_source_registry
 from .processing import process_sources
 from .reporting import write_report
@@ -31,6 +32,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     report = subparsers.add_parser("report", help="Write a local corpus acquisition summary.")
     report.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
+
+    audit = subparsers.add_parser("audit", help="Write release-status and license audit summary.")
+    audit.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
+
+    export = subparsers.add_parser("export", help="Export a filtered JSONL release profile.")
+    export.add_argument("--profile", default="releasable", help="Export profile: releasable, benchmark, synthetic, needs_audit, all.")
+    export.add_argument("--force", action="store_true", help="Replace an existing release file.")
+    export.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
 
     return parser
 
@@ -72,6 +81,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_process(args)
     if args.command == "report":
         return run_report(args)
+    if args.command == "audit":
+        return run_audit(args)
+    if args.command == "export":
+        return run_export(args)
     parser.error(f"unsupported command {args.command}")
     return 2
 
@@ -89,6 +102,22 @@ def run_process(args: argparse.Namespace) -> int:
 def run_report(args: argparse.Namespace) -> int:
     path = write_report(Path(args.root).resolve())
     print(f"ok       report -> {path}")
+    return 0
+
+
+def run_audit(args: argparse.Namespace) -> int:
+    path = write_audit(Path(args.root).resolve())
+    print(f"ok       audit -> {path}")
+    return 0
+
+
+def run_export(args: argparse.Namespace) -> int:
+    try:
+        path, count = export_profile(Path(args.root).resolve(), profile=args.profile, force=args.force)
+    except (FileExistsError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(f"ok       export:{args.profile} -> {path} ({count} records)")
     return 0
 
 
