@@ -45,6 +45,8 @@ def process_sources(root: Path, source_id: str = "all", force: bool = False, lim
         "naamah": process_naamah,
         "samhitika_0_0_1": process_samhitika,
         "gretil_sanskrit": process_gretil_sanskrit,
+        "sarit_corpus": process_sarit_corpus,
+        "saamayik": process_saamayik,
     }
     selected = list(processors) if source_id == "all" else [source_id]
     results: list[ProcessResult] = []
@@ -304,6 +306,92 @@ def process_gretil_sanskrit(root: Path, force: bool = False, limit: int | None =
             append_jsonl(output, rows)
             return ProcessResult(source_id, "ok", str(output), count)
     append_jsonl(output, rows)
+
+    return ProcessResult(source_id, "ok", str(output), count)
+
+
+def process_sarit_corpus(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
+    source_id = "sarit_corpus"
+    raw_dir = root / "data" / "raw" / source_id
+    output = _output_path(root, source_id, force)
+    metadata = _source_metadata(source_id)
+    count = 0
+    rows = []
+
+    for xml_path in sorted(raw_dir.glob("*.xml")):
+        if xml_path.name.startswith("00-") or xml_path.name == "saritcorpus.xml":
+            continue
+        record = _read_gretil_tei(xml_path)
+        if record is None:
+            continue
+        count += 1
+        text_latn = normalize_text(record["text_latn"])
+        rows.append(
+            {
+                "record_id": f"{source_id}:{xml_path.stem}",
+                "source_id": source_id,
+                "record_type": "tei_document",
+                "title": record.get("title"),
+                "text": transliterate_iast_to_devanagari(text_latn),
+                "text_lang": "sa-Deva",
+                "text_latn": text_latn,
+                "text_latn_scheme": "IAST",
+                "source_path": xml_path.name,
+                "normalization": ["unicode_nfc", "whitespace_squeeze", "tei_body_itertext", "iast_to_devanagari"],
+                **metadata,
+            }
+        )
+        if len(rows) >= 25:
+            append_jsonl(output, rows)
+            rows = []
+        if limit is not None and count >= limit:
+            append_jsonl(output, rows)
+            return ProcessResult(source_id, "ok", str(output), count)
+    append_jsonl(output, rows)
+
+    return ProcessResult(source_id, "ok", str(output), count)
+
+
+def process_saamayik(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
+    source_id = "saamayik"
+    raw_dir = root / "data" / "raw" / source_id / "data" / "final_data"
+    output = _output_path(root, source_id, force)
+    metadata = _source_metadata(source_id)
+    count = 0
+
+    for split in ("train", "dev", "test"):
+        sa_path = raw_dir / f"{split}.sa"
+        en_path = raw_dir / f"{split}.en"
+        if not sa_path.exists() or not en_path.exists():
+            continue
+        rows = []
+        with sa_path.open(encoding="utf-8") as sa_file, en_path.open(encoding="utf-8") as en_file:
+            for line_number, (sa_line, en_line) in enumerate(zip(sa_file, en_file), start=1):
+                sanskrit = normalize_text(sa_line)
+                english = normalize_text(en_line)
+                if not sanskrit:
+                    continue
+                count += 1
+                rows.append(
+                    {
+                        "record_id": f"{source_id}:{split}:{line_number}",
+                        "source_id": source_id,
+                        "record_type": "parallel_sentence",
+                        "split": split,
+                        "text": sanskrit,
+                        "text_lang": "sa-Deva",
+                        "translation": english,
+                        "translation_lang": "en",
+                        "source_path": f"data/final_data/{split}.sa",
+                        "line_number": line_number,
+                        "normalization": ["unicode_nfc", "whitespace_squeeze"],
+                        **metadata,
+                    }
+                )
+                if limit is not None and count >= limit:
+                    append_jsonl(output, rows)
+                    return ProcessResult(source_id, "ok", str(output), count)
+        append_jsonl(output, rows)
 
     return ProcessResult(source_id, "ok", str(output), count)
 

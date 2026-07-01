@@ -96,3 +96,18 @@ def test_process_gretil_tei_fixture(tmp_path: Path) -> None:
     assert row["text_latn"] == "agnim īḷe purohitaṃ"
     assert "English Header" not in row["text_latn"]
     assert "duplicate" not in row["text_latn"]
+
+
+def test_process_saamayik_fixture(tmp_path: Path) -> None:
+    raw = tmp_path / "data" / "raw" / "saamayik" / "data" / "final_data"
+    raw.mkdir(parents=True)
+    (raw / "train.sa").write_text("गुरुः पठति\n", encoding="utf-8")
+    (raw / "train.en").write_text("The teacher reads\n", encoding="utf-8")
+
+    result = process_sources(tmp_path, "saamayik", force=True)[0]
+    row = json.loads((tmp_path / "data" / "processed" / "saamayik.jsonl").read_text(encoding="utf-8"))
+
+    assert result.record_count == 1
+    assert row["release_status"] == "needs_audit"
+    assert row["text_lang"] == "sa-Deva"
+    assert row["translation"] == "The teacher reads"
