@@ -51,6 +51,7 @@ def process_sources(root: Path, source_id: str = "all", force: bool = False, lim
         "saamayik": process_saamayik,
         "sanskrit_wikipedia": process_sanskrit_wikipedia,
         "sanskrit_wikisource": process_sanskrit_wikisource,
+        "github_oliverhellwig": process_github_oliverhellwig,
     }
     selected = list(processors) if source_id == "all" else [source_id]
     results: list[ProcessResult] = []
@@ -406,6 +407,63 @@ def process_sanskrit_wikipedia(root: Path, force: bool = False, limit: int | Non
 
 def process_sanskrit_wikisource(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
     return _process_mediawiki_dump(root, "sanskrit_wikisource", "sawikisource-latest-pages-articles.xml.bz2", force, limit)
+
+
+def process_github_oliverhellwig(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
+    source_id = "github_oliverhellwig"
+    raw_dir = root / "data" / "raw" / source_id / "dcs" / "data" / "conllu" / "files"
+    output = _output_path(root, source_id, force)
+    metadata = _source_metadata(source_id)
+    count = 0
+    rows = []
+
+    for path in sorted(raw_dir.rglob("*.conllu")):
+        text_title, chapter = _read_dcs_file_metadata(path)
+        for sentence in _read_conllu_sentences(path):
+            text_latn = normalize_text(sentence.get("text", ""))
+            if not text_latn:
+                continue
+            count += 1
+            sent_id = sentence.get("sent_id", str(count))
+            rows.append(
+                {
+                    "record_id": f"{source_id}:{sent_id}",
+                    "source_id": source_id,
+                    "record_type": "dcs_treebank_sentence",
+                    "text": transliterate_iast_to_devanagari(text_latn),
+                    "text_lang": "sa-Deva",
+                    "text_latn": text_latn,
+                    "text_latn_scheme": "IAST",
+                    "sent_id": sent_id,
+                    "title": text_title,
+                    "chapter": chapter,
+                    "source_path": str(path.relative_to(root / "data" / "raw" / source_id)),
+                    "normalization": ["unicode_nfc", "whitespace_squeeze", "iast_to_devanagari"],
+                    **metadata,
+                }
+            )
+            if len(rows) >= 5000:
+                append_jsonl(output, rows)
+                rows = []
+            if limit is not None and count >= limit:
+                append_jsonl(output, rows)
+                return ProcessResult(source_id, "ok", str(output), count)
+    append_jsonl(output, rows)
+    return ProcessResult(source_id, "ok", str(output), count)
+
+
+def _read_dcs_file_metadata(path: Path) -> tuple[str | None, str | None]:
+    title = None
+    chapter = None
+    with path.open(encoding="utf-8", errors="ignore") as handle:
+        for line in handle:
+            if line.startswith("# text ="):
+                break
+            if line.startswith("## text:"):
+                title = normalize_text(line.split(":", 1)[1])
+            elif line.startswith("## chapter:"):
+                chapter = normalize_text(line.split(":", 1)[1])
+    return title, chapter
 
 
 def _process_mediawiki_dump(

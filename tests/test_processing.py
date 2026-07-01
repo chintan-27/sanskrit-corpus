@@ -134,3 +134,21 @@ def test_process_mediawiki_fixture(tmp_path: Path) -> None:
     assert result.record_count == 1
     assert row["release_status"] == "releasable"
     assert row["title"] == "रामः"
+
+
+def test_process_github_oliverhellwig_fixture(tmp_path: Path) -> None:
+    raw = tmp_path / "data" / "raw" / "github_oliverhellwig" / "dcs" / "data" / "conllu" / "files" / "Work"
+    raw.mkdir(parents=True)
+    (raw / "sample.conllu").write_text(
+        "## text: Test Work\n## chapter: 1\n# text = agnim īḷe purohitaṃ\n# sent_id = 10\n1\tagnim\tagni\tNOUN\t_\t_\t0\troot\t_\t_\n\n",
+        encoding="utf-8",
+    )
+
+    result = process_sources(tmp_path, "github_oliverhellwig", force=True)[0]
+    row = json.loads((tmp_path / "data" / "processed" / "github_oliverhellwig.jsonl").read_text(encoding="utf-8"))
+
+    assert result.record_count == 1
+    assert row["release_status"] == "needs_audit"
+    assert row["title"] == "Test Work"
+    assert row["chapter"] == "1"
+    assert row["text"] == "अग्निम् ईळे पुरोहितं"
