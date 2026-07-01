@@ -8,11 +8,14 @@ from typing import Any
 
 PROFILE_STATUSES = {
     "releasable": {"releasable"},
+    "clean_releasable": {"releasable"},
     "benchmark": {"benchmark"},
     "synthetic": {"synthetic"},
     "needs_audit": {"needs_audit"},
     "all": {"releasable", "benchmark", "synthetic", "needs_audit", "restricted"},
 }
+
+CLEAN_PROFILES = {"clean_releasable"}
 
 
 def audit_processed(root: Path) -> dict[str, Any]:
@@ -61,11 +64,19 @@ def export_profile(root: Path, profile: str, force: bool = False) -> tuple[Path,
 
     allowed = PROFILE_STATUSES[profile]
     count = 0
+    seen_text: set[str] = set()
     with output.open("w", encoding="utf-8") as out:
         for path in sorted((root / "data" / "processed").glob("*.jsonl")):
             for row in _read_jsonl(path):
                 if row.get("release_status") not in allowed:
                     continue
+                if profile in CLEAN_PROFILES:
+                    if not is_clean_record(row):
+                        continue
+                    key = _dedupe_key(row)
+                    if key in seen_text:
+                        continue
+                    seen_text.add(key)
                 out.write(json.dumps(row, ensure_ascii=False, sort_keys=True))
                 out.write("\n")
                 count += 1
@@ -77,3 +88,26 @@ def _read_jsonl(path: Path):
         for line in handle:
             if line.strip():
                 yield json.loads(line)
+
+
+def is_clean_record(row: dict[str, Any]) -> bool:
+    text = str(row.get("text") or "").strip()
+    if len(text) < 40:
+        return False
+    if "#REDIRECT" in text.upper() or "{{" in text or "[[" in text:
+        return False
+    if str(row.get("text_lang", "")).startswith("sa") and _devanagari_ratio(text) < 0.45:
+        return False
+    return True
+
+
+def _dedupe_key(row: dict[str, Any]) -> str:
+    return " ".join(str(row.get("text") or "").lower().split())
+
+
+def _devanagari_ratio(text: str) -> float:
+    letters = [char for char in text if char.isalpha()]
+    if not letters:
+        return 0.0
+    devanagari = sum(1 for char in letters if "\u0900" <= char <= "\u097f")
+    return devanagari / len(letters)

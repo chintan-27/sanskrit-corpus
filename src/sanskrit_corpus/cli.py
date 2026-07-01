@@ -37,7 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
 
     export = subparsers.add_parser("export", help="Export a filtered JSONL release profile.")
-    export.add_argument("--profile", default="releasable", help="Export profile: releasable, benchmark, synthetic, needs_audit, all.")
+    export.add_argument(
+        "--profile",
+        default="releasable",
+        help="Export profile: releasable, clean_releasable, benchmark, synthetic, needs_audit, all.",
+    )
     export.add_argument("--force", action="store_true", help="Replace an existing release file.")
     export.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
 
