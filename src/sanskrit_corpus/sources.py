@@ -354,6 +354,34 @@ def build_sources() -> dict[str, BaseSource]:
             "https://dumps.wikimedia.org/sawikisource/latest/sawikisource-latest-pages-articles.xml.bz2",
             "sawikisource-latest-pages-articles.xml.bz2",
         ),
+        UrlFileSource(
+            SourceRecord(
+                "gyaandweep_shabdkosha",
+                "Gyaandweep śabda kośaḥ",
+                "https://gyaandweep.com/learn/sanskrit/shabdkosha/",
+                "web_lexicon",
+                "url_download",
+                "needs_audit",
+                "needs_audit",
+                "Sanskrit vocabulary/dictionary page; site terms and extraction quality need review.",
+            ),
+            "https://gyaandweep.com/learn/sanskrit/shabdkosha/",
+            "shabdkosha.html",
+        ),
+        UrlFileSource(
+            SourceRecord(
+                "learnsanskrit_grammar",
+                "Learn Sanskrit grammar",
+                "https://learnsanskrit.org/grammar/",
+                "web_grammar",
+                "url_download",
+                "CC-NC-SA-1.0",
+                "needs_audit",
+                "Grammar guide index and lessons; NonCommercial ShareAlike terms prevent clean releasable export.",
+            ),
+            "https://learnsanskrit.org/grammar/",
+            "grammar.html",
+        ),
         UnavailableSource(
             SourceRecord(
                 "kaggle_sanskrit_text_corpus",

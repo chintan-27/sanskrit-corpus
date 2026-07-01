@@ -11,6 +11,8 @@ def test_unclear_sources_are_not_releasable() -> None:
     assert sources["sarit_corpus"].record.release_status == "needs_audit"
     assert sources["saamayik"].record.release_status == "needs_audit"
     assert sources["sanskrit_wikisource"].record.release_status == "needs_audit"
+    assert sources["gyaandweep_shabdkosha"].record.release_status == "needs_audit"
+    assert sources["learnsanskrit_grammar"].record.release_status == "needs_audit"
 
 
 def test_synthetic_source_is_quarantined() -> None:
