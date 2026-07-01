@@ -197,6 +197,28 @@ class ZipArchiveSource(BaseSource):
             return self._failed_record(target, exc, context.sample)
 
 
+class UrlFileSource(BaseSource):
+    def __init__(self, record: SourceRecord, file_url: str, file_name: str) -> None:
+        self.record = record
+        self.file_url = file_url
+        self.file_name = file_name
+
+    def pull(self, context: PullContext) -> PullRunRecord:
+        target = self._target_dir(context)
+        if context.dry_run:
+            return PullRunRecord(self.record.source_id, "planned", utc_now(), str(target), 0, 0, "", sample=context.sample)
+        if target.exists():
+            if not context.force:
+                return self._success_record(target, context.sample)
+            shutil.rmtree(target)
+        target.mkdir(parents=True, exist_ok=True)
+        try:
+            (target / self.file_name).write_bytes(fetch_bytes(self.file_url, timeout=300))
+            return self._success_record(target, context.sample)
+        except Exception as exc:
+            return self._failed_record(target, exc, context.sample)
+
+
 def build_sources() -> dict[str, BaseSource]:
     sources: list[BaseSource] = [
         HuggingFaceDatasetSource(
@@ -303,6 +325,34 @@ def build_sources() -> dict[str, BaseSource]:
             ),
             "https://gretil.sub.uni-goettingen.de/gretil/1_sanskr.zip",
             "1_sanskr.zip",
+        ),
+        UrlFileSource(
+            SourceRecord(
+                "sanskrit_wikipedia",
+                "Sanskrit Wikipedia dump",
+                "https://dumps.wikimedia.org/sawiki/latest/",
+                "wikimedia_dump",
+                "url_download",
+                "CC-BY-SA-4.0",
+                "releasable",
+                "Sanskrit Wikipedia latest pages-articles dump; Wikimedia attribution and ShareAlike required.",
+            ),
+            "https://dumps.wikimedia.org/sawiki/latest/sawiki-latest-pages-articles.xml.bz2",
+            "sawiki-latest-pages-articles.xml.bz2",
+        ),
+        UrlFileSource(
+            SourceRecord(
+                "sanskrit_wikisource",
+                "Sanskrit Wikisource dump",
+                "https://dumps.wikimedia.org/sawikisource/latest/",
+                "wikimedia_dump",
+                "url_download",
+                "CC-BY-SA-4.0",
+                "needs_audit",
+                "Sanskrit Wikisource latest pages-articles dump; page/source-level audit required before release.",
+            ),
+            "https://dumps.wikimedia.org/sawikisource/latest/sawikisource-latest-pages-articles.xml.bz2",
+            "sawikisource-latest-pages-articles.xml.bz2",
         ),
         UnavailableSource(
             SourceRecord(
