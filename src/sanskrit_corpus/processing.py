@@ -55,6 +55,7 @@ def process_sources(root: Path, source_id: str = "all", force: bool = False, lim
         "github_oliverhellwig": process_github_oliverhellwig,
         "gyaandweep_shabdkosha": process_gyaandweep_shabdkosha,
         "learnsanskrit_grammar": process_learnsanskrit_grammar,
+        "internet_archive": process_internet_archive,
     }
     selected = list(processors) if source_id == "all" else [source_id]
     results: list[ProcessResult] = []
@@ -475,6 +476,46 @@ def process_gyaandweep_shabdkosha(root: Path, force: bool = False, limit: int | 
 
 def process_learnsanskrit_grammar(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
     return _process_single_html_page(root, "learnsanskrit_grammar", "grammar.html", "web_grammar_page", limit, force)
+
+
+def process_internet_archive(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
+    source_id = "internet_archive"
+    raw_dir = root / "data" / "raw" / source_id
+    output = _output_path(root, source_id, force)
+    count = 0
+    rows = []
+
+    for path in sorted(raw_dir.rglob("*")):
+        if not path.is_file() or not path.name.lower().endswith(("_djvu.txt", "_text.txt")):
+            continue
+        text = normalize_text(path.read_text(encoding="utf-8", errors="ignore"))
+        if len(text) < 100:
+            continue
+        count += 1
+        identifier = path.parent.name
+        rows.append(
+            {
+                "record_id": f"{source_id}:{identifier}:{path.stem}",
+                "source_id": source_id,
+                "record_type": "ia_ocr_text",
+                "identifier": identifier,
+                "text": text,
+                "text_lang": "mixed",
+                "source_path": str(path.relative_to(raw_dir)),
+                "license_label": "needs_audit",
+                "release_status": "needs_audit",
+                "source_url": f"https://archive.org/details/{identifier}",
+                "normalization": ["unicode_nfc", "whitespace_squeeze", "ocr_text_import"],
+            }
+        )
+        if len(rows) >= 50:
+            append_jsonl(output, rows)
+            rows = []
+        if limit is not None and count >= limit:
+            append_jsonl(output, rows)
+            return ProcessResult(source_id, "ok", str(output), count)
+    append_jsonl(output, rows)
+    return ProcessResult(source_id, "ok", str(output), count)
 
 
 def _process_single_html_page(

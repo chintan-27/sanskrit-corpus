@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from .exporting import export_profile, write_audit
+from .internet_archive import DEFAULT_IA_QUERY, pull_internet_archive
 from .manifest import append_jsonl, ensure_manifest_dir, write_source_registry
 from .processing import process_sources
 from .reporting import write_report
@@ -44,6 +45,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     export.add_argument("--force", action="store_true", help="Replace an existing release file.")
     export.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
+
+    ia_pull = subparsers.add_parser("ia-pull", help="Pull Internet Archive files with a byte quota.")
+    ia_pull.add_argument("--query", default=DEFAULT_IA_QUERY, help="Internet Archive advanced search query.")
+    ia_pull.add_argument("--limit", type=int, default=25, help="Maximum archive items to inspect.")
+    ia_pull.add_argument("--max-gb", type=float, default=1.0, help="Maximum downloaded bytes in GiB.")
+    ia_pull.add_argument("--file-kind", default="ocr_text", choices=["ocr_text", "pdf", "all"], help="Derivative files to download.")
+    ia_pull.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
 
     return parser
 
@@ -89,6 +97,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_audit(args)
     if args.command == "export":
         return run_export(args)
+    if args.command == "ia-pull":
+        return run_ia_pull(args)
     parser.error(f"unsupported command {args.command}")
     return 2
 
@@ -122,6 +132,22 @@ def run_export(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 2
     print(f"ok       export:{args.profile} -> {path} ({count} records)")
+    return 0
+
+
+def run_ia_pull(args: argparse.Namespace) -> int:
+    result = pull_internet_archive(
+        Path(args.root).resolve(),
+        query=args.query,
+        limit=args.limit,
+        max_gb=args.max_gb,
+        file_kind=args.file_kind,
+    )
+    print(
+        f"{result.status:8} internet_archive -> {result.file_count} files, "
+        f"{result.byte_count} bytes, {result.item_count} items"
+    )
+    print(f"         manifest: {result.manifest_path}")
     return 0
 
 

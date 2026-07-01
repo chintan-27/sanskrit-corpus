@@ -172,3 +172,16 @@ def test_process_single_html_fixture(tmp_path: Path) -> None:
 
 def test_clean_html_text_removes_scripts() -> None:
     assert clean_html_text("<script>bad()</script><p>रामः पठति</p>") == "रामः पठति"
+
+
+def test_process_internet_archive_fixture(tmp_path: Path) -> None:
+    raw = tmp_path / "data" / "raw" / "internet_archive" / "item1"
+    raw.mkdir(parents=True)
+    (raw / "item1_djvu.txt").write_text("रामः " * 30, encoding="utf-8")
+
+    result = process_sources(tmp_path, "internet_archive", force=True)[0]
+    row = json.loads((tmp_path / "data" / "processed" / "internet_archive.jsonl").read_text(encoding="utf-8"))
+
+    assert result.record_count == 1
+    assert row["release_status"] == "needs_audit"
+    assert row["source_url"] == "https://archive.org/details/item1"
