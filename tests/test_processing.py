@@ -1,7 +1,8 @@
 import json
+import bz2
 from pathlib import Path
 
-from sanskrit_corpus.processing import normalize_text, process_sources, transliterate_iast_to_devanagari
+from sanskrit_corpus.processing import clean_wikitext, normalize_text, process_sources, transliterate_iast_to_devanagari
 
 
 def test_normalize_text() -> None:
@@ -111,3 +112,25 @@ def test_process_saamayik_fixture(tmp_path: Path) -> None:
     assert row["release_status"] == "needs_audit"
     assert row["text_lang"] == "sa-Deva"
     assert row["translation"] == "The teacher reads"
+
+
+def test_clean_wikitext() -> None:
+    assert clean_wikitext("'''रामः''' [[अयोध्या|अयोध्यायाम्]] {{x|y}} <ref>note</ref>") == "रामः अयोध्यायाम्"
+
+
+def test_process_mediawiki_fixture(tmp_path: Path) -> None:
+    raw = tmp_path / "data" / "raw" / "sanskrit_wikipedia"
+    raw.mkdir(parents=True)
+    xml = """<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.11/">
+  <page><title>रामः</title><ns>0</ns><id>1</id><revision><text>रामः अयोध्यायाः राजकुमारः आसीत्। रामायणग्रन्थे तस्य कथा विस्तरेण वर्णिता अस्ति।</text></revision></page>
+  <page><title>Talk</title><ns>1</ns><id>2</id><revision><text>skip this page</text></revision></page>
+</mediawiki>"""
+    with bz2.open(raw / "sawiki-latest-pages-articles.xml.bz2", "wt", encoding="utf-8") as handle:
+        handle.write(xml)
+
+    result = process_sources(tmp_path, "sanskrit_wikipedia", force=True)[0]
+    row = json.loads((tmp_path / "data" / "processed" / "sanskrit_wikipedia.jsonl").read_text(encoding="utf-8"))
+
+    assert result.record_count == 1
+    assert row["release_status"] == "releasable"
+    assert row["title"] == "रामः"

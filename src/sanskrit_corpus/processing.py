@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import bz2
 import csv
 import json
+import re
 import sys
 import unicodedata
 import xml.etree.ElementTree as ET
@@ -47,6 +49,8 @@ def process_sources(root: Path, source_id: str = "all", force: bool = False, lim
         "gretil_sanskrit": process_gretil_sanskrit,
         "sarit_corpus": process_sarit_corpus,
         "saamayik": process_saamayik,
+        "sanskrit_wikipedia": process_sanskrit_wikipedia,
+        "sanskrit_wikisource": process_sanskrit_wikisource,
     }
     selected = list(processors) if source_id == "all" else [source_id]
     results: list[ProcessResult] = []
@@ -394,6 +398,84 @@ def process_saamayik(root: Path, force: bool = False, limit: int | None = None) 
         append_jsonl(output, rows)
 
     return ProcessResult(source_id, "ok", str(output), count)
+
+
+def process_sanskrit_wikipedia(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
+    return _process_mediawiki_dump(root, "sanskrit_wikipedia", "sawiki-latest-pages-articles.xml.bz2", force, limit)
+
+
+def process_sanskrit_wikisource(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
+    return _process_mediawiki_dump(root, "sanskrit_wikisource", "sawikisource-latest-pages-articles.xml.bz2", force, limit)
+
+
+def _process_mediawiki_dump(
+    root: Path,
+    source_id: str,
+    dump_name: str,
+    force: bool,
+    limit: int | None,
+) -> ProcessResult:
+    raw_path = root / "data" / "raw" / source_id / dump_name
+    output = _output_path(root, source_id, force)
+    metadata = _source_metadata(source_id)
+    count = 0
+    rows = []
+
+    with bz2.open(raw_path, "rb") as handle:
+        for page in _iter_mediawiki_pages(handle):
+            if page.get("ns") != "0":
+                continue
+            text = clean_wikitext(page.get("text", ""))
+            if len(text) < 40:
+                continue
+            count += 1
+            rows.append(
+                {
+                    "record_id": f"{source_id}:{page.get('id', count)}",
+                    "source_id": source_id,
+                    "record_type": "wiki_page",
+                    "title": page.get("title"),
+                    "page_id": page.get("id"),
+                    "text": text,
+                    "text_lang": "sa-Deva",
+                    "source_path": dump_name,
+                    "normalization": ["unicode_nfc", "whitespace_squeeze", "mediawiki_markup_cleanup"],
+                    **metadata,
+                }
+            )
+            if len(rows) >= 1000:
+                append_jsonl(output, rows)
+                rows = []
+            if limit is not None and count >= limit:
+                append_jsonl(output, rows)
+                return ProcessResult(source_id, "ok", str(output), count)
+    append_jsonl(output, rows)
+    return ProcessResult(source_id, "ok", str(output), count)
+
+
+def _iter_mediawiki_pages(handle) -> Iterable[dict[str, str]]:
+    ns = {"mw": "http://www.mediawiki.org/xml/export-0.11/"}
+    for _, elem in ET.iterparse(handle, events=("end",)):
+        if elem.tag.endswith("page"):
+            title = elem.findtext("mw:title", default="", namespaces=ns)
+            namespace = elem.findtext("mw:ns", default="", namespaces=ns)
+            page_id = elem.findtext("mw:id", default="", namespaces=ns)
+            text = elem.findtext("mw:revision/mw:text", default="", namespaces=ns)
+            yield {"title": title, "ns": namespace, "id": page_id, "text": text}
+            elem.clear()
+
+
+def clean_wikitext(text: str) -> str:
+    text = re.sub(r"(?is)<ref[^>/]*/>|<ref[^>]*>.*?</ref>", " ", text)
+    text = re.sub(r"(?is)<!--.*?-->", " ", text)
+    text = re.sub(r"(?is)\{\{.*?\}\}", " ", text)
+    text = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]+)\]\]", r"\1", text)
+    text = re.sub(r"\[https?://[^\s\]]+\s*([^\]]*)\]", r"\1", text)
+    text = re.sub(r"'{2,}", "", text)
+    text = re.sub(r"(?m)^\s*[=]{2,}\s*(.*?)\s*[=]{2,}\s*$", r"\1", text)
+    text = re.sub(r"(?m)^\s*[\*\#;:]+\s*", "", text)
+    text = re.sub(r"(?m)^\s*\{\|.*?$|^\s*\|\}.*?$|^\s*[!|].*$", " ", text)
+    return normalize_text(text)
 
 
 def _read_gretil_tei(path: Path) -> dict[str, str] | None:
