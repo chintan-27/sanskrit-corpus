@@ -1,4 +1,6 @@
 AGENTS.md
+*.md
+*.txt
 
 data/raw/
 data/processed/
