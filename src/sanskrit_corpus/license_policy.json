@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "sources": {
+    "github_oliverhellwig": {
+      "license_label": "CC-BY-4.0",
+      "release_status": "releasable",
+      "scope": "dcs/data/conllu",
+      "evidence_url": "https://github.com/OliverHellwig/sanskrit/blob/master/dcs/data/conllu/readme.md",
+      "verified_at": "2026-07-13",
+      "attribution": "Oliver Hellwig, Digital Corpus of Sanskrit (DCS), 2010-2021"
+    },
+    "gretil_sanskrit": {
+      "license_label": "CC-BY-NC-SA-4.0",
+      "release_status": "restricted",
+      "scope": "current TEI archive",
+      "evidence_url": "https://gretil.sub.uni-goettingen.de/gretil.html",
+      "verified_at": "2026-07-13",
+      "attribution": "GRETIL, Goettingen Register of Electronic Texts in Indian Languages"
+    },
+    "learnsanskrit_grammar": {
+      "license_label": "CC-NC-SA-1.0",
+      "release_status": "restricted",
+      "scope": "grammar pages",
+      "evidence_url": "https://learnsanskrit.org/",
+      "verified_at": "2026-07-13",
+      "attribution": "learnsanskrit.org"
+    },
+    "sarit_corpus": {
+      "license_label": "needs_audit",
+      "release_status": "needs_audit",
+      "scope": "per TEI document",
+      "evidence_url": "https://github.com/sarit/SARIT-corpus",
+      "verified_at": "2026-07-13",
+      "attribution": "SARIT: Search and Retrieval of Indic Texts",
+      "evidence_extractor": "tei_license"
+    }
+  }
+}

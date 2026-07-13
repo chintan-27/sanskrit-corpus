@@ -8,15 +8,20 @@ import sys
 import unicodedata
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
+from contextvars import ContextVar
 from dataclasses import dataclass
 from html import unescape
+from itertools import zip_longest
 from pathlib import Path
+from uuid import uuid4
 
-from indic_transliteration import sanscript
+from indic_transliteration import sanscript  # type: ignore[import-untyped]
 
-from .manifest import append_jsonl
+from . import __version__
+from .licensing import apply_license
+from .manifest import ProcessRunRecord, directory_stats, file_stats, utc_now
+from .manifest import append_jsonl as _append_jsonl
 from .sources import build_sources
-
 
 csv.field_size_limit(sys.maxsize)
 
@@ -28,6 +33,28 @@ class ProcessResult:
     output_path: str
     record_count: int
     error: str | None = None
+
+
+_ACTIVE_OUTPUTS: ContextVar[dict[Path, Path] | None] = ContextVar("active_outputs", default=None)
+_ACTIVE_RUN_ID: ContextVar[str | None] = ContextVar("active_run_id", default=None)
+_ACTIVE_ROOT: ContextVar[Path | None] = ContextVar("active_root", default=None)
+
+
+def append_jsonl(path: Path, rows: Iterable[object]) -> None:
+    run_id = _ACTIVE_RUN_ID.get()
+    root = _ACTIVE_ROOT.get()
+    enriched: list[object] = []
+    for row in rows:
+        if isinstance(row, dict):
+            updated = dict(row)
+            if root is not None:
+                updated = apply_license(root, updated)
+            if run_id is not None:
+                updated["processing_run_id"] = run_id
+            enriched.append(updated)
+        else:
+            enriched.append(row)
+    _append_jsonl(path, enriched)
 
 
 def normalize_text(text: str) -> str:
@@ -64,20 +91,87 @@ def process_sources(root: Path, source_id: str = "all", force: bool = False, lim
         if processor is None:
             results.append(ProcessResult(selected_id, "skipped", "", 0, "no processor is available for this source"))
             continue
+        output_map: dict[Path, Path] = {}
+        run_id = uuid4().hex
+        started_at = utc_now()
+        token = _ACTIVE_OUTPUTS.set(output_map)
+        run_token = _ACTIVE_RUN_ID.set(run_id)
+        root_token = _ACTIVE_ROOT.set(root)
         try:
-            results.append(processor(root, force=force, limit=limit))
+            result = processor(root, force=force, limit=limit)
+            if result.status == "ok" and result.record_count == 0:
+                for temporary in output_map:
+                    temporary.unlink(missing_ok=True)
+                existing = root / "data" / "processed" / f"{selected_id}.jsonl"
+                result = ProcessResult(
+                    result.source_id,
+                    "empty",
+                    str(existing) if existing.exists() else "",
+                    0,
+                    "processor emitted no records",
+                )
+            else:
+                for temporary, final in output_map.items():
+                    temporary.replace(final)
+                if output_map:
+                    result = ProcessResult(
+                        result.source_id,
+                        result.status,
+                        str(next(iter(output_map.values()))),
+                        result.record_count,
+                        result.error,
+                    )
+            results.append(result)
         except Exception as exc:
+            for temporary in output_map:
+                temporary.unlink(missing_ok=True)
             results.append(ProcessResult(selected_id, "failed", "", 0, str(exc)))
+        finally:
+            _ACTIVE_OUTPUTS.reset(token)
+            _ACTIVE_RUN_ID.reset(run_token)
+            _ACTIVE_ROOT.reset(root_token)
+        recorded = results[-1]
+        raw_path = root / "data" / "raw" / selected_id
+        _, _, input_checksum = directory_stats(raw_path)
+        output_path = Path(recorded.output_path) if recorded.output_path else None
+        if output_path is not None and output_path.exists():
+            byte_count, output_checksum = file_stats(output_path)
+        else:
+            byte_count, output_checksum = 0, ""
+        _append_jsonl(
+            root / "data" / "manifests" / "process_runs.jsonl",
+            [
+                ProcessRunRecord(
+                    run_id=run_id,
+                    source_id=selected_id,
+                    status=recorded.status,
+                    started_at=started_at,
+                    completed_at=utc_now(),
+                    input_checksum_sha256=input_checksum,
+                    output_path=recorded.output_path,
+                    record_count=recorded.record_count,
+                    byte_count=byte_count,
+                    checksum_sha256=output_checksum,
+                    processor_version=__version__,
+                    error=recorded.error,
+                )
+            ],
+        )
     return results
 
 
 def _output_path(root: Path, source_id: str, force: bool) -> Path:
-    output = root / "data" / "processed" / f"{source_id}.jsonl"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    if output.exists() and not force:
-        raise FileExistsError(f"{output} already exists; pass --force to replace it")
-    output.write_text("", encoding="utf-8")
-    return output
+    final = root / "data" / "processed" / f"{source_id}.jsonl"
+    final.parent.mkdir(parents=True, exist_ok=True)
+    if final.exists() and not force:
+        raise FileExistsError(f"{final} already exists; pass --force to replace it")
+    active = _ACTIVE_OUTPUTS.get()
+    if active is None:
+        raise RuntimeError("processors must be invoked through process_sources")
+    temporary = final.with_name(f".{final.name}.{uuid4().hex}.tmp")
+    temporary.write_text("", encoding="utf-8")
+    active[temporary] = final
+    return temporary
 
 
 def _source_metadata(source_id: str) -> dict[str, str]:
@@ -103,7 +197,10 @@ def process_itihasa(root: Path, force: bool = False, limit: int | None = None) -
             continue
         rows = []
         with sn_path.open(encoding="utf-8", newline="") as sn_file, en_path.open(encoding="utf-8", newline="") as en_file:
-            for line_number, (sn_row, en_row) in enumerate(zip(csv.reader(sn_file), csv.reader(en_file)), start=1):
+            for line_number, pair in enumerate(zip_longest(csv.reader(sn_file), csv.reader(en_file)), start=1):
+                sn_row, en_row = pair
+                if sn_row is None or en_row is None:
+                    raise ValueError(f"unaligned parallel files for {split} at row {line_number}")
                 sanskrit = normalize_text(sn_row[0]) if sn_row else ""
                 english = normalize_text(en_row[0]) if en_row else ""
                 if not sanskrit:
@@ -250,7 +347,7 @@ def process_samhitika(root: Path, force: bool = False, limit: int | None = None)
     parquet = pq.ParquetFile(raw_path)
     for batch in parquet.iter_batches(columns=["bookcorpus_id", "text"], batch_size=5000):
         payload = batch.to_pydict()
-        for bookcorpus_id, text_value in zip(payload["bookcorpus_id"], payload["text"]):
+        for bookcorpus_id, text_value in zip(payload["bookcorpus_id"], payload["text"], strict=True):
             text = normalize_text(text_value or "")
             if not text:
                 continue
@@ -375,7 +472,10 @@ def process_saamayik(root: Path, force: bool = False, limit: int | None = None) 
             continue
         rows = []
         with sa_path.open(encoding="utf-8") as sa_file, en_path.open(encoding="utf-8") as en_file:
-            for line_number, (sa_line, en_line) in enumerate(zip(sa_file, en_file), start=1):
+            for line_number, pair in enumerate(zip_longest(sa_file, en_file), start=1):
+                sa_line, en_line = pair
+                if sa_line is None or en_line is None:
+                    raise ValueError(f"unaligned parallel files for {split} at row {line_number}")
                 sanskrit = normalize_text(sa_line)
                 english = normalize_text(en_line)
                 if not sanskrit:
@@ -423,7 +523,8 @@ def process_github_oliverhellwig(root: Path, force: bool = False, limit: int | N
 
     for path in sorted(raw_dir.rglob("*.conllu")):
         text_title, chapter = _read_dcs_file_metadata(path)
-        for sentence in _read_conllu_sentences(path):
+        relative_path = str(path.relative_to(root / "data" / "raw" / source_id))
+        for sentence_number, sentence in enumerate(_read_conllu_sentences(path), start=1):
             text_latn = normalize_text(sentence.get("text", ""))
             if not text_latn:
                 continue
@@ -431,7 +532,7 @@ def process_github_oliverhellwig(root: Path, force: bool = False, limit: int | N
             sent_id = sentence.get("sent_id", str(count))
             rows.append(
                 {
-                    "record_id": f"{source_id}:{sent_id}",
+                    "record_id": f"{source_id}:{relative_path}:{sentence_number}:{sent_id}",
                     "source_id": source_id,
                     "record_type": "dcs_treebank_sentence",
                     "text": transliterate_iast_to_devanagari(text_latn),
@@ -439,9 +540,10 @@ def process_github_oliverhellwig(root: Path, force: bool = False, limit: int | N
                     "text_latn": text_latn,
                     "text_latn_scheme": "IAST",
                     "sent_id": sent_id,
+                    "sentence_number": sentence_number,
                     "title": text_title,
                     "chapter": chapter,
-                    "source_path": str(path.relative_to(root / "data" / "raw" / source_id)),
+                    "source_path": relative_path,
                     "normalization": ["unicode_nfc", "whitespace_squeeze", "iast_to_devanagari"],
                     **metadata,
                 }

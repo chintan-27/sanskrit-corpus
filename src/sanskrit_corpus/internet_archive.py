@@ -7,8 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .manifest import append_jsonl, utc_now
-from .sources import fetch_bytes, fetch_json
-
+from .sources import download_file, fetch_json
 
 DEFAULT_IA_QUERY = "sanskrit AND mediatype:texts"
 
@@ -29,6 +28,10 @@ def pull_internet_archive(
     max_gb: float = 1.0,
     file_kind: str = "ocr_text",
 ) -> IaPullResult:
+    if limit < 0:
+        raise ValueError("limit must be non-negative")
+    if max_gb < 0:
+        raise ValueError("max_gb must be non-negative")
     max_bytes = int(max_gb * 1024 * 1024 * 1024)
     target_root = root / "data" / "raw" / "internet_archive"
     manifest_path = root / "data" / "manifests" / "internet_archive_pulls.jsonl"
@@ -41,7 +44,7 @@ def pull_internet_archive(
     rows = []
 
     for item in search_items(query, limit):
-        identifier = item["identifier"]
+        identifier = _safe_component(str(item["identifier"]))
         item_count += 1
         metadata = item_metadata(identifier)
         selected = select_files(metadata.get("files", []), file_kind)
@@ -54,20 +57,21 @@ def pull_internet_archive(
             if size and byte_count + size > max_bytes:
                 rows.append(_manifest_row(identifier, file_info, "skipped_quota", item_dir, 0))
                 continue
-            name = file_info["name"]
+            name = str(file_info["name"])
+            _validate_relative_path(name)
             local_path = item_dir / name
             if local_path.exists():
                 downloaded = local_path.stat().st_size
             else:
                 local_path.parent.mkdir(parents=True, exist_ok=True)
+                remaining = max_bytes - byte_count
                 url = f"https://archive.org/download/{urllib.parse.quote(identifier)}/{urllib.parse.quote(name)}"
                 try:
-                    data = fetch_bytes(url, timeout=300)
+                    result = download_file(url, local_path, timeout=300, max_bytes=remaining)
                 except Exception as exc:
                     rows.append(_manifest_row(identifier, file_info, f"failed:{exc}", item_dir, 0))
                     continue
-                local_path.write_bytes(data)
-                downloaded = len(data)
+                downloaded = result.byte_count
             byte_count += downloaded
             file_count += 1
             rows.append(_manifest_row(identifier, file_info, "ok", item_dir, downloaded))
@@ -101,6 +105,7 @@ def item_metadata(identifier: str) -> dict[str, Any]:
 
 
 def select_files(files: list[dict[str, Any]], file_kind: str) -> list[dict[str, Any]]:
+    suffixes: tuple[str, ...]
     if file_kind == "ocr_text":
         suffixes = ("_djvu.txt", "_text.txt")
     elif file_kind == "pdf":
@@ -124,3 +129,15 @@ def _manifest_row(identifier: str, file_info: dict[str, Any], status: str, item_
         "pulled_at": utc_now(),
         "release_status": "needs_audit",
     }
+
+
+def _safe_component(value: str) -> str:
+    if not value or value in {".", ".."} or "/" in value or "\\" in value:
+        raise ValueError(f"unsafe path component: {value!r}")
+    return value
+
+
+def _validate_relative_path(value: str) -> None:
+    path = Path(value)
+    if path.is_absolute() or ".." in path.parts or not value:
+        raise ValueError(f"unsafe relative path: {value!r}")

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "record_id", "source_id", "record_type", "text", "text_lang",
+    "license_label", "release_status", "source_url", "source_path", "normalization"
+  ],
+  "properties": {
+    "record_id": {"type": "string", "minLength": 1},
+    "source_id": {"type": "string", "minLength": 1},
+    "record_type": {"type": "string", "minLength": 1},
+    "text": {"type": "string", "minLength": 1},
+    "text_lang": {"type": "string", "minLength": 1},
+    "license_label": {"type": "string", "minLength": 1},
+    "release_status": {
+      "enum": ["releasable", "benchmark", "synthetic", "needs_audit", "restricted"]
+    },
+    "source_url": {"type": "string", "minLength": 1},
+    "source_path": {"type": "string", "minLength": 1},
+    "normalization": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "processing_run_id": {"type": "string", "minLength": 1}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"record_type": {"const": "parallel_sentence"}}},
+      "then": {"required": ["translation", "translation_lang", "split", "line_number"]}
+    },
+    {
+      "if": {"properties": {"record_type": {"const": "ner_sentence"}}},
+      "then": {"required": ["tokens", "ner_tags"]}
+    }
+  ],
+  "additionalProperties": true
+}

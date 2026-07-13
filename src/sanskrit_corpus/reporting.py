@@ -42,10 +42,8 @@ def _jsonl_outputs(path: Path) -> list[dict[str, object]]:
         return []
     rows = []
     for file_path in sorted(path.glob("*.jsonl")):
-        line_count = 0
         with file_path.open(encoding="utf-8") as handle:
-            for line_count, _ in enumerate(handle, start=1):
-                pass
+            line_count = sum(1 for _ in handle)
         rows.append(
             {
                 "source_id": file_path.stem,

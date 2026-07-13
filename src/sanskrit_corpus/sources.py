@@ -3,23 +3,27 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 from .manifest import PullRunRecord, SourceRecord, directory_stats, utc_now
-
 
 USER_AGENT = "sanskrit-corpus/0.1 (+local research acquisition)"
 
 
-def fetch_bytes(url: str, timeout: int = 60) -> bytes:
+def fetch_bytes(url: str, timeout: int = 60, max_bytes: int = 16 * 1024 * 1024) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read()
+        data = response.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            raise RuntimeError(f"response from {url} exceeds {max_bytes} bytes")
+        return data
 
 
 def fetch_json(url: str, timeout: int = 60) -> object:
@@ -34,6 +38,71 @@ class PullContext:
     force: bool
 
 
+@dataclass(frozen=True)
+class DownloadResult:
+    byte_count: int
+    checksum_sha256: str
+    etag: str | None
+    last_modified: str | None
+
+
+def download_file(url: str, destination: Path, timeout: int = 300, max_bytes: int | None = None) -> DownloadResult:
+    import hashlib
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.{uuid4().hex}.partial")
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    digest = hashlib.sha256()
+    byte_count = 0
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response, temporary.open("wb") as handle:
+            while chunk := response.read(1024 * 1024):
+                byte_count += len(chunk)
+                if max_bytes is not None and byte_count > max_bytes:
+                    raise RuntimeError(f"download from {url} exceeds the {max_bytes}-byte limit")
+                digest.update(chunk)
+                handle.write(chunk)
+            etag = response.headers.get("ETag")
+            last_modified = response.headers.get("Last-Modified")
+        temporary.replace(destination)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+    return DownloadResult(byte_count, digest.hexdigest(), etag, last_modified)
+
+
+def _staging_directory(target: Path) -> Path:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=f".{target.name}.", suffix=".partial", dir=target.parent))
+
+
+def _publish_directory(staging: Path, target: Path) -> None:
+    backup = target.with_name(f".{target.name}.{uuid4().hex}.backup")
+    if target.exists():
+        target.replace(backup)
+    try:
+        staging.replace(target)
+    except Exception:
+        if backup.exists():
+            backup.replace(target)
+        raise
+    if backup.exists():
+        shutil.rmtree(backup)
+
+
+def _safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
+    root = destination.resolve()
+    for member in archive.infolist():
+        member_path = Path(member.filename)
+        mode = member.external_attr >> 16
+        if member_path.is_absolute() or ".." in member_path.parts or (mode & 0o170000) == 0o120000:
+            raise RuntimeError(f"unsafe archive member: {member.filename}")
+        output = (destination / member_path).resolve()
+        if output != root and root not in output.parents:
+            raise RuntimeError(f"archive member escapes destination: {member.filename}")
+    archive.extractall(destination)
+
+
 class BaseSource:
     record: SourceRecord
 
@@ -45,6 +114,18 @@ class BaseSource:
 
     def _success_record(self, target: Path, sample: bool) -> PullRunRecord:
         file_count, byte_count, checksum = directory_stats(target)
+        (target / "_pull_complete.json").write_text(
+            json.dumps(
+                {
+                    "source_id": self.record.source_id,
+                    "file_count": file_count,
+                    "byte_count": byte_count,
+                    "checksum_sha256": checksum,
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
         return PullRunRecord(
             source_id=self.record.source_id,
             status="ok",
@@ -92,21 +173,27 @@ class GitSource(BaseSource):
         target = self._target_dir(context)
         if context.dry_run:
             return PullRunRecord(self.record.source_id, "planned", utc_now(), str(target), 0, 0, "", sample=context.sample)
-        if target.exists():
-            if not context.force:
-                return self._success_record(target, context.sample)
-            shutil.rmtree(target)
-        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() and not context.force:
+            return self._success_record(target, context.sample)
+        staging = _staging_directory(target)
         try:
             subprocess.run(
-                ["git", "clone", "--depth", "1", self.clone_url, str(target)],
+                ["git", "clone", "--depth", "1", self.clone_url, str(staging)],
                 check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 text=True,
             )
-            return self._success_record(target, context.sample)
+            revision = subprocess.run(
+                ["git", "-C", str(staging), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            _publish_directory(staging, target)
+            row = self._success_record(target, context.sample)
+            return PullRunRecord(**{**row.__dict__, "source_revision": revision})
         except Exception as exc:  # pragma: no cover - exercised in integration use
+            shutil.rmtree(staging, ignore_errors=True)
             return self._failed_record(target, exc, context.sample)
 
 
@@ -120,23 +207,23 @@ class HuggingFaceDatasetSource(BaseSource):
         target = self._target_dir(context)
         if context.dry_run:
             return PullRunRecord(self.record.source_id, "planned", utc_now(), str(target), 0, 0, "", sample=context.sample)
-        if target.exists():
-            if not context.force:
-                return self._success_record(target, context.sample)
-            shutil.rmtree(target)
-        target.mkdir(parents=True, exist_ok=True)
+        if target.exists() and not context.force:
+            return self._success_record(target, context.sample)
+        staging = _staging_directory(target)
         try:
             tree = self._repo_tree()
-            files = [entry["path"] for entry in tree if entry.get("type") == "file"]
+            files = [str(entry["path"]) for entry in tree if entry.get("type") == "file" and isinstance(entry.get("path"), str)]
             selected = self._select_files(files, context.sample)
             for remote_path in selected:
-                self._download_file(remote_path, target / remote_path)
-            (target / "_pull_selection.json").write_text(
+                self._download_file(remote_path, staging / remote_path)
+            (staging / "_pull_selection.json").write_text(
                 json.dumps({"repo_id": self.repo_id, "sample": context.sample, "files": selected}, indent=2),
                 encoding="utf-8",
             )
+            _publish_directory(staging, target)
             return self._success_record(target, context.sample)
         except Exception as exc:
+            shutil.rmtree(staging, ignore_errors=True)
             return self._failed_record(target, exc, context.sample)
 
     def _repo_tree(self) -> list[dict[str, object]]:
@@ -167,7 +254,7 @@ class HuggingFaceDatasetSource(BaseSource):
         encoded = urllib.parse.quote(remote_path, safe="/")
         url = f"https://huggingface.co/datasets/{self.repo_id}/resolve/main/{encoded}"
         local_path.parent.mkdir(parents=True, exist_ok=True)
-        local_path.write_bytes(fetch_bytes(url))
+        download_file(url, local_path)
 
 
 class ZipArchiveSource(BaseSource):
@@ -180,20 +267,20 @@ class ZipArchiveSource(BaseSource):
         target = self._target_dir(context)
         if context.dry_run:
             return PullRunRecord(self.record.source_id, "planned", utc_now(), str(target), 0, 0, "", sample=context.sample)
-        if target.exists():
-            if not context.force:
-                return self._success_record(target, context.sample)
-            shutil.rmtree(target)
-        target.mkdir(parents=True, exist_ok=True)
+        if target.exists() and not context.force:
+            return self._success_record(target, context.sample)
+        staging = _staging_directory(target)
         try:
-            archive_path = target / self.archive_name
-            archive_path.write_bytes(fetch_bytes(self.archive_url, timeout=300))
-            extracted_dir = target / "extracted"
+            archive_path = staging / self.archive_name
+            download_file(self.archive_url, archive_path)
+            extracted_dir = staging / "extracted"
             extracted_dir.mkdir(exist_ok=True)
             with zipfile.ZipFile(archive_path) as archive:
-                archive.extractall(extracted_dir)
+                _safe_extract(archive, extracted_dir)
+            _publish_directory(staging, target)
             return self._success_record(target, context.sample)
         except Exception as exc:
+            shutil.rmtree(staging, ignore_errors=True)
             return self._failed_record(target, exc, context.sample)
 
 
@@ -207,15 +294,16 @@ class UrlFileSource(BaseSource):
         target = self._target_dir(context)
         if context.dry_run:
             return PullRunRecord(self.record.source_id, "planned", utc_now(), str(target), 0, 0, "", sample=context.sample)
-        if target.exists():
-            if not context.force:
-                return self._success_record(target, context.sample)
-            shutil.rmtree(target)
-        target.mkdir(parents=True, exist_ok=True)
-        try:
-            (target / self.file_name).write_bytes(fetch_bytes(self.file_url, timeout=300))
+        if target.exists() and not context.force:
             return self._success_record(target, context.sample)
+        staging = _staging_directory(target)
+        try:
+            result = download_file(self.file_url, staging / self.file_name)
+            _publish_directory(staging, target)
+            row = self._success_record(target, context.sample)
+            return PullRunRecord(**{**row.__dict__, "etag": result.etag, "last_modified": result.last_modified})
         except Exception as exc:
+            shutil.rmtree(staging, ignore_errors=True)
             return self._failed_record(target, exc, context.sample)
 
 
@@ -280,9 +368,9 @@ def build_sources() -> dict[str, BaseSource]:
                 "https://github.com/OliverHellwig/sanskrit",
                 "github_repository",
                 "git_clone",
-                "needs_audit",
-                "needs_audit",
-                "DCS-associated Sanskrit repository; audit repo license and source terms before release.",
+                "CC-BY-4.0",
+                "releasable",
+                "DCS CoNLL-U data is licensed CC BY 4.0; preserve attribution.",
             ),
             "https://github.com/OliverHellwig/sanskrit.git",
         ),
@@ -319,9 +407,9 @@ def build_sources() -> dict[str, BaseSource]:
                 "https://gretil.sub.uni-goettingen.de/gretil.html",
                 "text_archive",
                 "zip_download",
-                "needs_audit",
-                "needs_audit",
-                "Cumulative Sanskrit archive; item-level source and license audit required before release.",
+                "CC-BY-NC-SA-4.0",
+                "restricted",
+                "Current TEI archive declares CC BY-NC-SA 4.0; exclude from releasable exports.",
             ),
             "https://gretil.sub.uni-goettingen.de/gretil/1_sanskr.zip",
             "1_sanskr.zip",
@@ -376,7 +464,7 @@ def build_sources() -> dict[str, BaseSource]:
                 "web_grammar",
                 "url_download",
                 "CC-NC-SA-1.0",
-                "needs_audit",
+                "restricted",
                 "Grammar guide index and lessons; NonCommercial ShareAlike terms prevent clean releasable export.",
             ),
             "https://learnsanskrit.org/grammar/",

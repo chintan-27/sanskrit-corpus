@@ -1,5 +1,5 @@
-import json
 import bz2
+import json
 from pathlib import Path
 
 from sanskrit_corpus.processing import clean_html_text, clean_wikitext, normalize_text, process_sources, transliterate_iast_to_devanagari
@@ -91,7 +91,7 @@ def test_process_gretil_tei_fixture(tmp_path: Path) -> None:
     row = json.loads((tmp_path / "data" / "processed" / "gretil_sanskrit.jsonl").read_text(encoding="utf-8"))
 
     assert result.record_count == 1
-    assert row["release_status"] == "needs_audit"
+    assert row["release_status"] == "restricted"
     assert row["title"] == "Test Text"
     assert row["text"] == "अग्निम् ईळे पुरोहितं"
     assert row["text_latn"] == "agnim īḷe purohitaṃ"
@@ -122,7 +122,9 @@ def test_process_mediawiki_fixture(tmp_path: Path) -> None:
     raw = tmp_path / "data" / "raw" / "sanskrit_wikipedia"
     raw.mkdir(parents=True)
     xml = """<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.11/">
-  <page><title>रामः</title><ns>0</ns><id>1</id><revision><text>रामः अयोध्यायाः राजकुमारः आसीत्। रामायणग्रन्थे तस्य कथा विस्तरेण वर्णिता अस्ति।</text></revision></page>
+  <page><title>रामः</title><ns>0</ns><id>1</id><revision><text>
+  रामः अयोध्यायाः राजकुमारः आसीत्। रामायणग्रन्थे तस्य कथा विस्तरेण वर्णिता अस्ति।
+  </text></revision></page>
   <page><title>Talk</title><ns>1</ns><id>2</id><revision><text>skip this page</text></revision></page>
 </mediawiki>"""
     with bz2.open(raw / "sawiki-latest-pages-articles.xml.bz2", "wt", encoding="utf-8") as handle:
@@ -148,10 +150,12 @@ def test_process_github_oliverhellwig_fixture(tmp_path: Path) -> None:
     row = json.loads((tmp_path / "data" / "processed" / "github_oliverhellwig.jsonl").read_text(encoding="utf-8"))
 
     assert result.record_count == 1
-    assert row["release_status"] == "needs_audit"
+    assert row["release_status"] == "releasable"
     assert row["title"] == "Test Work"
     assert row["chapter"] == "1"
     assert row["text"] == "अग्निम् ईळे पुरोहितं"
+    assert row["sentence_number"] == 1
+    assert row["record_id"].endswith(":1:10")
 
 
 def test_process_single_html_fixture(tmp_path: Path) -> None:
@@ -166,7 +170,7 @@ def test_process_single_html_fixture(tmp_path: Path) -> None:
     row = json.loads((tmp_path / "data" / "processed" / "learnsanskrit_grammar.jsonl").read_text(encoding="utf-8"))
 
     assert result.record_count == 1
-    assert row["release_status"] == "needs_audit"
+    assert row["release_status"] == "restricted"
     assert "Sanskrit Grammar" in row["text"]
 
 
@@ -185,3 +189,18 @@ def test_process_internet_archive_fixture(tmp_path: Path) -> None:
     assert result.record_count == 1
     assert row["release_status"] == "needs_audit"
     assert row["source_url"] == "https://archive.org/details/item1"
+
+
+def test_parallel_mismatch_preserves_existing_output(tmp_path: Path) -> None:
+    raw = tmp_path / "data" / "raw" / "itihasa"
+    raw.mkdir(parents=True)
+    (raw / "train.sn.csv").write_text("एकम्\nद्वे\n", encoding="utf-8")
+    (raw / "train.en.csv").write_text("One\n", encoding="utf-8")
+    output = tmp_path / "data" / "processed" / "itihasa.jsonl"
+    output.parent.mkdir(parents=True)
+    output.write_text("previous output\n", encoding="utf-8")
+
+    result = process_sources(tmp_path, "itihasa", force=True)[0]
+
+    assert result.status == "failed"
+    assert output.read_text(encoding="utf-8") == "previous output\n"

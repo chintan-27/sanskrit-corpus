@@ -37,3 +37,11 @@ def test_directory_stats_are_stable(tmp_path: Path) -> None:
     assert first == second
     assert first[0] == 2
     assert first[1] == len("alpha") + len("beta")
+
+
+def test_directory_stats_ignore_completion_marker(tmp_path: Path) -> None:
+    (tmp_path / "payload.txt").write_text("payload", encoding="utf-8")
+    before = directory_stats(tmp_path)
+    (tmp_path / "_pull_complete.json").write_text("{}", encoding="utf-8")
+
+    assert directory_stats(tmp_path) == before

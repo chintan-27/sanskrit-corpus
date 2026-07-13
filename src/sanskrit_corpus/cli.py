@@ -10,6 +10,21 @@ from .manifest import append_jsonl, ensure_manifest_dir, write_source_registry
 from .processing import process_sources
 from .reporting import write_report
 from .sources import PullContext, build_sources
+from .validation import validate_processed, write_validation_report
+
+
+def non_negative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be non-negative")
+    return parsed
+
+
+def non_negative_float(value: str) -> float:
+    parsed = float(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be non-negative")
+    return parsed
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -27,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     process = subparsers.add_parser("process", help="Normalize pulled raw sources into data/processed JSONL.")
     process.add_argument("--source", default="all", help="Source id to process, or 'all'.")
-    process.add_argument("--limit", type=int, help="Maximum records to emit per source.")
+    process.add_argument("--limit", type=non_negative_int, help="Maximum records to emit per source.")
     process.add_argument("--force", action="store_true", help="Replace existing processed JSONL files.")
     process.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
 
@@ -36,6 +51,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     audit = subparsers.add_parser("audit", help="Write release-status and license audit summary.")
     audit.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
+
+    validate = subparsers.add_parser("validate", help="Validate processed JSONL records and corpus integrity.")
+    validate.add_argument("--source", default="all", help="Source id to validate, or 'all'.")
+    validate.add_argument("--max-errors", type=non_negative_int, default=100, help="Maximum issue examples to retain.")
+    validate.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
 
     export = subparsers.add_parser("export", help="Export a filtered JSONL release profile.")
     export.add_argument(
@@ -48,8 +68,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     ia_pull = subparsers.add_parser("ia-pull", help="Pull Internet Archive files with a byte quota.")
     ia_pull.add_argument("--query", default=DEFAULT_IA_QUERY, help="Internet Archive advanced search query.")
-    ia_pull.add_argument("--limit", type=int, default=25, help="Maximum archive items to inspect.")
-    ia_pull.add_argument("--max-gb", type=float, default=1.0, help="Maximum downloaded bytes in GiB.")
+    ia_pull.add_argument("--limit", type=non_negative_int, default=25, help="Maximum archive items to inspect.")
+    ia_pull.add_argument("--max-gb", type=non_negative_float, default=1.0, help="Maximum downloaded bytes in GiB.")
     ia_pull.add_argument("--file-kind", default="ocr_text", choices=["ocr_text", "pdf", "all"], help="Derivative files to download.")
     ia_pull.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
 
@@ -95,6 +115,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_report(args)
     if args.command == "audit":
         return run_audit(args)
+    if args.command == "validate":
+        return run_validate(args)
     if args.command == "export":
         return run_export(args)
     if args.command == "ia-pull":
@@ -110,7 +132,7 @@ def run_process(args: argparse.Namespace) -> int:
         print(f"{result.status:8} {result.source_id} -> {result.output_path} ({result.record_count} records)")
         if result.error:
             print(f"         {result.error}")
-    return 1 if any(result.status == "failed" for result in results) else 0
+    return 1 if any(result.status in {"failed", "empty", "missing_input"} for result in results) else 0
 
 
 def run_report(args: argparse.Namespace) -> int:
@@ -123,6 +145,16 @@ def run_audit(args: argparse.Namespace) -> int:
     path = write_audit(Path(args.root).resolve())
     print(f"ok       audit -> {path}")
     return 0
+
+
+def run_validate(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    report = validate_processed(root, source_id=args.source, max_errors=args.max_errors)
+    path = write_validation_report(root, report)
+    errors = report["counts"].get("error", 0)
+    warnings = report["counts"].get("warning", 0)
+    print(f"{report['status']:8} validate -> {path} ({errors} errors, {warnings} warnings)")
+    return 1 if errors else 0
 
 
 def run_export(args: argparse.Namespace) -> int:

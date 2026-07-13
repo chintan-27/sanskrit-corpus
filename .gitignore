@@ -1,6 +1,7 @@
 AGENTS.md
-*.md
-*.txt
+CLAUDE.md
+deep-research/chatgpt.md
+deep-research/gemini.txt
 
 data/raw/
 data/processed/
@@ -13,6 +14,8 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+.coverage
+dist/
 
 *.parquet
 *.jsonl.gz
