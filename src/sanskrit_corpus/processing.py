@@ -275,13 +275,13 @@ def process_itihasa(root: Path, force: bool = False, limit: int | None = None) -
         if not sn_path.exists() or not en_path.exists():
             continue
         rows = []
-        with sn_path.open(encoding="utf-8", newline="") as sn_file, en_path.open(encoding="utf-8", newline="") as en_file:
-            for line_number, pair in enumerate(zip_longest(csv.reader(sn_file), csv.reader(en_file)), start=1):
-                sn_row, en_row = pair
-                if sn_row is None or en_row is None:
+        with sn_path.open(encoding="utf-8") as sn_file, en_path.open(encoding="utf-8") as en_file:
+            for line_number, pair in enumerate(zip_longest(sn_file, en_file), start=1):
+                sanskrit_line, english_line = pair
+                if sanskrit_line is None or english_line is None:
                     raise ValueError(f"unaligned parallel files for {split} at row {line_number}")
-                sanskrit = normalize_text(sn_row[0]) if sn_row else ""
-                english = normalize_text(en_row[0]) if en_row else ""
+                sanskrit = normalize_text(sanskrit_line)
+                english = normalize_text(english_line)
                 if not sanskrit:
                     continue
                 count += 1
@@ -397,7 +397,7 @@ def _read_conllu_sentences(path: Path) -> Iterable[dict[str, Any]]:
 
 
 def _parse_conllu_attributes(value: str) -> dict[str, str]:
-    if value == "_":
+    if not value or value == "_":
         return {}
     attributes: dict[str, str] = {}
     for item in value.split("|"):
@@ -409,13 +409,18 @@ def _parse_conllu_attributes(value: str) -> dict[str, str]:
 def _normalize_ud_token(token: dict[str, Any]) -> dict[str, Any]:
     form_latn = str(token["form"])
     lemma_latn = str(token["lemma"])
-    return {
+    normalized = {
         **token,
         "form_latn": form_latn,
         "form": transliterate_iast_to_devanagari(form_latn),
         "lemma_latn": lemma_latn,
         "lemma": transliterate_iast_to_devanagari(lemma_latn) if lemma_latn != "_" else None,
     }
+    unsandhied_latn = token["misc"].get("Unsandhied")
+    if unsandhied_latn:
+        normalized["unsandhied_latn"] = unsandhied_latn
+        normalized["unsandhied"] = transliterate_iast_to_devanagari(unsandhied_latn)
+    return normalized
 
 
 def process_naamah(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
@@ -654,6 +659,7 @@ def process_github_oliverhellwig(root: Path, force: bool = False, limit: int | N
             text_latn = normalize_text(str(sentence.get("text", "")))
             if not text_latn:
                 continue
+            tokens = [_normalize_ud_token(token) for token in sentence.get("tokens", [])]
             count += 1
             sent_id = sentence.get("sent_id", str(count))
             rows.append(
@@ -665,6 +671,7 @@ def process_github_oliverhellwig(root: Path, force: bool = False, limit: int | N
                     "text_lang": "sa-Deva",
                     "text_latn": text_latn,
                     "text_latn_scheme": "IAST",
+                    "tokens": tokens,
                     "sent_id": sent_id,
                     "sentence_number": sentence_number,
                     "title": text_title,

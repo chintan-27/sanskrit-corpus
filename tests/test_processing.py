@@ -69,6 +69,20 @@ def test_process_limit(tmp_path: Path) -> None:
     assert len((tmp_path / "data" / "processed" / "itihasa.jsonl").read_text(encoding="utf-8").splitlines()) == 1
 
 
+def test_process_itihasa_preserves_unquoted_commas(tmp_path: Path) -> None:
+    raw = tmp_path / "data" / "raw" / "itihasa"
+    raw.mkdir(parents=True)
+    (raw / "train.sn.csv").write_text("रामः, सीता च वनं गतौ।\n", encoding="utf-8")
+    (raw / "train.en.csv").write_text("Rama, and Sita went to the forest.\n", encoding="utf-8")
+
+    result = process_sources(tmp_path, "itihasa", force=True)[0]
+    row = json.loads((tmp_path / "data" / "processed" / "itihasa.jsonl").read_text(encoding="utf-8"))
+
+    assert result.record_count == 1
+    assert row["text"] == "रामः, सीता च वनं गतौ।"
+    assert row["translation"] == "Rama, and Sita went to the forest."
+
+
 def test_process_ud_fixture(tmp_path: Path) -> None:
     raw = tmp_path / "data" / "raw" / "ud_sanskrit_vedic"
     raw.mkdir(parents=True)
@@ -177,7 +191,9 @@ def test_process_github_oliverhellwig_fixture(tmp_path: Path) -> None:
     raw = tmp_path / "data" / "raw" / "github_oliverhellwig" / "dcs" / "data" / "conllu" / "files" / "Work"
     raw.mkdir(parents=True)
     (raw / "sample.conllu").write_text(
-        "## text: Test Work\n## chapter: 1\n# text = agnim īḷe purohitaṃ\n# sent_id = 10\n1\tagnim\tagni\tNOUN\t_\t_\t0\troot\t_\t_\n\n",
+        "## text: Test Work\n## chapter: 1\n# text = agnim īḷe purohitaṃ\n# sent_id = 10\n"
+        "1\tagnim\tagni\tNOUN\t_\tCase=Acc|Number=Sing\t0\troot\t_\t"
+        "LemmaId=1|Unsandhied=agniṃ\n\n",
         encoding="utf-8",
     )
 
@@ -191,6 +207,9 @@ def test_process_github_oliverhellwig_fixture(tmp_path: Path) -> None:
     assert row["text"] == "अग्निम् ईळे पुरोहितं"
     assert row["sentence_number"] == 1
     assert row["record_id"].endswith(":1:10")
+    assert row["tokens"][0]["lemma"] == "अग्नि"
+    assert row["tokens"][0]["misc"]["LemmaId"] == "1"
+    assert row["tokens"][0]["unsandhied"] == "अग्निं"
 
 
 def test_process_single_html_fixture(tmp_path: Path) -> None:

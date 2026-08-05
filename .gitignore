@@ -10,6 +10,7 @@ data/manifests/
 data/reports/
 data/quality/
 data/curriculum/
+data/grammar/
 
 .venv/
 __pycache__/

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .curriculum import build_curriculum_manifests
 from .exporting import export_profile, write_audit
+from .grammar import build_grammar_verified
 from .internet_archive import DEFAULT_IA_QUERY, pull_internet_archive
 from .manifest import append_jsonl, ensure_manifest_dir, write_source_registry
 from .processing import process_sources
@@ -61,6 +62,10 @@ def build_parser() -> argparse.ArgumentParser:
     curriculum = subparsers.add_parser("curriculum", help="Build disjoint training-phase manifests from quality sidecars.")
     curriculum.add_argument("--force", action="store_true", help="Replace existing curriculum manifests.")
     curriculum.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
+
+    grammar = subparsers.add_parser("grammar", help="Build the deduplicated, tokenizer-ready grammar corpus.")
+    grammar.add_argument("--force", action="store_true", help="Replace existing grammar artifacts.")
+    grammar.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
 
     audit = subparsers.add_parser("audit", help="Write release-status and license audit summary.")
     audit.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
@@ -130,6 +135,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_quality(args)
     if args.command == "curriculum":
         return run_curriculum(args)
+    if args.command == "grammar":
+        return run_grammar(args)
     if args.command == "audit":
         return run_audit(args)
     if args.command == "validate":
@@ -181,6 +188,16 @@ def run_curriculum(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 2
     print(f"ok       curriculum -> {path}")
+    return 0
+
+
+def run_grammar(args: argparse.Namespace) -> int:
+    try:
+        path = build_grammar_verified(Path(args.root).resolve(), force=args.force)
+    except (FileExistsError, FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(f"ok       grammar -> {path}")
     return 0
 
 

@@ -39,6 +39,7 @@ uv run sanskrit-corpus process --source itihasa --limit 100 --force
 uv run sanskrit-corpus quality --source all --limit 1000
 uv run sanskrit-corpus quality --source all --workers 8 --force
 uv run sanskrit-corpus curriculum
+uv run sanskrit-corpus grammar
 
 uv run sanskrit-corpus validate --source all
 uv run sanskrit-corpus audit
