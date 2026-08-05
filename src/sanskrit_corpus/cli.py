@@ -4,10 +4,12 @@ import argparse
 import sys
 from pathlib import Path
 
+from .curriculum import build_curriculum_manifests
 from .exporting import export_profile, write_audit
 from .internet_archive import DEFAULT_IA_QUERY, pull_internet_archive
 from .manifest import append_jsonl, ensure_manifest_dir, write_source_registry
 from .processing import process_sources
+from .quality import profile_sangraha_quality
 from .reporting import write_report
 from .sources import PullContext, build_sources
 from .validation import validate_processed, write_validation_report
@@ -48,6 +50,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     report = subparsers.add_parser("report", help="Write a local corpus acquisition summary.")
     report.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
+
+    quality = subparsers.add_parser("quality", help="Profile Sangraha quality, tiers, and exact duplicates.")
+    quality.add_argument("--source", default="all", help="Sangraha source id to profile, or 'all'.")
+    quality.add_argument("--limit", type=non_negative_int, help="Maximum records to profile per source.")
+    quality.add_argument("--workers", type=non_negative_int, default=8, help="Parallel text-analysis workers. Defaults to 8.")
+    quality.add_argument("--force", action="store_true", help="Replace existing quality sidecars.")
+    quality.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
+
+    curriculum = subparsers.add_parser("curriculum", help="Build disjoint training-phase manifests from quality sidecars.")
+    curriculum.add_argument("--force", action="store_true", help="Replace existing curriculum manifests.")
+    curriculum.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
 
     audit = subparsers.add_parser("audit", help="Write release-status and license audit summary.")
     audit.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
@@ -113,6 +126,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_process(args)
     if args.command == "report":
         return run_report(args)
+    if args.command == "quality":
+        return run_quality(args)
+    if args.command == "curriculum":
+        return run_curriculum(args)
     if args.command == "audit":
         return run_audit(args)
     if args.command == "validate":
@@ -138,6 +155,32 @@ def run_process(args: argparse.Namespace) -> int:
 def run_report(args: argparse.Namespace) -> int:
     path = write_report(Path(args.root).resolve())
     print(f"ok       report -> {path}")
+    return 0
+
+
+def run_quality(args: argparse.Namespace) -> int:
+    try:
+        path = profile_sangraha_quality(
+            Path(args.root).resolve(),
+            source_id=args.source,
+            force=args.force,
+            limit=args.limit,
+            workers=args.workers,
+        )
+    except (FileExistsError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(f"ok       quality -> {path}")
+    return 0
+
+
+def run_curriculum(args: argparse.Namespace) -> int:
+    try:
+        path = build_curriculum_manifests(Path(args.root).resolve(), force=args.force)
+    except (FileExistsError, FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(f"ok       curriculum -> {path}")
     return 0
 
 

@@ -8,6 +8,8 @@ data/processed/
 data/releases/
 data/manifests/
 data/reports/
+data/quality/
+data/curriculum/
 
 .venv/
 __pycache__/

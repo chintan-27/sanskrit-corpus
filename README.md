@@ -28,9 +28,17 @@ Downloads, processed outputs, reports, and releases are written through temporar
 uv run sanskrit-corpus pull --source all --sample --dry-run
 uv run sanskrit-corpus pull --source ud_sanskrit_vedic --sample
 uv run sanskrit-corpus pull --source ud_sanskrit_vedic --full --force
+uv run sanskrit-corpus pull --source sangraha_verified_sanskrit --sample
+uv run sanskrit-corpus pull --source sangraha_unverified_sanskrit --full
+uv run sanskrit-corpus pull --source sangraha_synthetic_sanskrit_deva --full
 
 uv run sanskrit-corpus process --source all
+uv run sanskrit-corpus process --source sangraha_verified_sanskrit --limit 100
 uv run sanskrit-corpus process --source itihasa --limit 100 --force
+
+uv run sanskrit-corpus quality --source all --limit 1000
+uv run sanskrit-corpus quality --source all --workers 8 --force
+uv run sanskrit-corpus curriculum
 
 uv run sanskrit-corpus validate --source all
 uv run sanskrit-corpus audit

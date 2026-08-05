@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -28,6 +29,22 @@ def fetch_bytes(url: str, timeout: int = 60, max_bytes: int = 16 * 1024 * 1024) 
 
 def fetch_json(url: str, timeout: int = 60) -> object:
     return json.loads(fetch_bytes(url, timeout=timeout).decode("utf-8"))
+
+
+def fetch_json_pages(url: str, timeout: int = 60) -> list[object]:
+    pages: list[object] = []
+    next_url: str | None = url
+    while next_url:
+        request = urllib.request.Request(next_url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            if not isinstance(payload, list):
+                raise RuntimeError(f"unexpected paginated response from {next_url}")
+            pages.extend(payload)
+            link = response.headers.get("Link", "")
+        match = re.search(r'<([^>]+)>;\s*rel="next"', link)
+        next_url = match.group(1) if match else None
+    return pages
 
 
 @dataclass(frozen=True)
@@ -198,24 +215,40 @@ class GitSource(BaseSource):
 
 
 class HuggingFaceDatasetSource(BaseSource):
-    def __init__(self, record: SourceRecord, repo_id: str, sample_file_limit: int = 8) -> None:
+    def __init__(
+        self,
+        record: SourceRecord,
+        repo_id: str,
+        sample_file_limit: int = 8,
+        path_prefix: str | None = None,
+    ) -> None:
         self.record = record
         self.repo_id = repo_id
         self.sample_file_limit = sample_file_limit
+        self.path_prefix = path_prefix.strip("/") if path_prefix else None
 
     def pull(self, context: PullContext) -> PullRunRecord:
         target = self._target_dir(context)
         if context.dry_run:
             return PullRunRecord(self.record.source_id, "planned", utc_now(), str(target), 0, 0, "", sample=context.sample)
+        reuse_existing = False
         if target.exists() and not context.force:
-            return self._success_record(target, context.sample)
+            selection_path = target / "_pull_selection.json"
+            selection = json.loads(selection_path.read_text(encoding="utf-8")) if selection_path.exists() else {}
+            if context.sample or selection.get("sample") is False:
+                return self._success_record(target, context.sample)
+            reuse_existing = True
         staging = _staging_directory(target)
         try:
+            if reuse_existing:
+                shutil.copytree(target, staging, dirs_exist_ok=True)
             tree = self._repo_tree()
             files = [str(entry["path"]) for entry in tree if entry.get("type") == "file" and isinstance(entry.get("path"), str)]
             selected = self._select_files(files, context.sample)
             for remote_path in selected:
-                self._download_file(remote_path, staging / remote_path)
+                local_path = staging / remote_path
+                if not local_path.exists():
+                    self._download_file(remote_path, local_path)
             (staging / "_pull_selection.json").write_text(
                 json.dumps({"repo_id": self.repo_id, "sample": context.sample, "files": selected}, indent=2),
                 encoding="utf-8",
@@ -227,13 +260,15 @@ class HuggingFaceDatasetSource(BaseSource):
             return self._failed_record(target, exc, context.sample)
 
     def _repo_tree(self) -> list[dict[str, object]]:
-        url = f"https://huggingface.co/api/datasets/{urllib.parse.quote(self.repo_id, safe='/')}/tree/main?recursive=1"
-        payload = fetch_json(url)
-        if not isinstance(payload, list):
-            raise RuntimeError(f"unexpected Hugging Face tree response for {self.repo_id}")
+        prefix = f"/{urllib.parse.quote(self.path_prefix, safe='/')}" if self.path_prefix else ""
+        url = f"https://huggingface.co/api/datasets/{urllib.parse.quote(self.repo_id, safe='/')}/tree/main{prefix}?recursive=1"
+        payload = fetch_json_pages(url)
         return [entry for entry in payload if isinstance(entry, dict)]
 
     def _select_files(self, files: list[str], sample: bool) -> list[str]:
+        if self.path_prefix:
+            expected_prefix = f"{self.path_prefix}/"
+            files = [path for path in files if path.startswith(expected_prefix)]
         preferred = []
         for path in files:
             name = Path(path).name.lower()
@@ -309,6 +344,51 @@ class UrlFileSource(BaseSource):
 
 def build_sources() -> dict[str, BaseSource]:
     sources: list[BaseSource] = [
+        HuggingFaceDatasetSource(
+            SourceRecord(
+                "sangraha_verified_sanskrit",
+                "AI4Bharat Sangraha Verified Sanskrit",
+                "https://huggingface.co/datasets/ai4bharat/sangraha/tree/main/verified/san",
+                "verified_pretraining_corpus",
+                "huggingface_parquet_subset",
+                "CC-BY-4.0-dataset; underlying-sources-vary",
+                "needs_audit",
+                "Human-source verified Sanskrit partition only; synthetic and unverified partitions are excluded.",
+            ),
+            "ai4bharat/sangraha",
+            sample_file_limit=1,
+            path_prefix="verified/san",
+        ),
+        HuggingFaceDatasetSource(
+            SourceRecord(
+                "sangraha_unverified_sanskrit",
+                "AI4Bharat Sangraha Unverified Sanskrit",
+                "https://huggingface.co/datasets/ai4bharat/sangraha/tree/main/unverified/san",
+                "filtered_web_corpus",
+                "huggingface_parquet_subset",
+                "CC-BY-4.0-dataset; underlying-sources-vary",
+                "needs_audit",
+                "Filtered Sanskrit web corpus; kept separate from verified and synthetic partitions.",
+            ),
+            "ai4bharat/sangraha",
+            sample_file_limit=1,
+            path_prefix="unverified/san",
+        ),
+        HuggingFaceDatasetSource(
+            SourceRecord(
+                "sangraha_synthetic_sanskrit_deva",
+                "AI4Bharat Sangraha Synthetic Sanskrit (Devanagari)",
+                "https://huggingface.co/datasets/ai4bharat/sangraha/tree/main/synthetic/san_Deva",
+                "synthetic_translation_corpus",
+                "huggingface_parquet_subset",
+                "CC-BY-4.0-dataset; translated-sources-vary",
+                "synthetic",
+                "English Wikimedia translated with IndicTrans2; Latin transliteration duplicate excluded.",
+            ),
+            "ai4bharat/sangraha",
+            sample_file_limit=1,
+            path_prefix="synthetic/san_Deva",
+        ),
         HuggingFaceDatasetSource(
             SourceRecord(
                 "itihasa",

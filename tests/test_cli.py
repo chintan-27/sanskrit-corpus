@@ -54,3 +54,7 @@ def test_ia_cli_prints_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 def test_negative_cli_values_are_rejected() -> None:
     with pytest.raises(SystemExit):
         main(["ia-pull", "--max-gb", "-1"])
+
+
+def test_quality_cli_rejects_unknown_source(tmp_path: Path) -> None:
+    assert main(["quality", "--source", "missing", "--root", str(tmp_path)]) == 2

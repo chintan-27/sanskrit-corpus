@@ -19,6 +19,7 @@ from sanskrit_corpus.sources import (
     download_file,
     fetch_bytes,
     fetch_json,
+    fetch_json_pages,
 )
 
 
@@ -85,6 +86,29 @@ def test_fetch_helpers_enforce_response_limit(monkeypatch: pytest.MonkeyPatch) -
         fetch_bytes("https://example.test", max_bytes=2)
 
 
+def test_fetch_json_pages_follows_next_link(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Response(io.BytesIO):
+        def __init__(self, payload: bytes, link: str = "") -> None:
+            super().__init__(payload)
+            self.headers = {"Link": link}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.close()
+
+    responses = iter(
+        [
+            Response(b'[{"path":"one"}]', '<https://example.test/page-2>; rel="next"'),
+            Response(b'[{"path":"two"}]'),
+        ]
+    )
+    monkeypatch.setattr("urllib.request.urlopen", lambda request, timeout: next(responses))
+
+    assert fetch_json_pages("https://example.test/page-1") == [{"path": "one"}, {"path": "two"}]
+
+
 def test_url_source_publishes_atomically(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = UrlFileSource(_source_record(), "https://example.test/file", "file.txt")
 
@@ -131,6 +155,37 @@ def test_huggingface_source_selects_and_downloads_sample(tmp_path: Path, monkeyp
 
     assert result.status == "ok"
     assert source._select_files(["README.md", "data.csv", "ignored.bin"], sample=False) == ["README.md", "data.csv"]
+
+
+def test_huggingface_source_limits_download_to_partition() -> None:
+    source = HuggingFaceDatasetSource(_source_record(), "org/repo", sample_file_limit=1, path_prefix="verified/san")
+
+    files = [
+        "verified/hin/part-000.parquet",
+        "verified/san/part-000.parquet",
+        "verified/san/part-001.parquet",
+        "synthetic/san_Deva/part-000.parquet",
+    ]
+
+    assert source._select_files(files, sample=True) == ["verified/san/part-000.parquet"]
+    assert source._select_files(files, sample=False) == ["verified/san/part-000.parquet", "verified/san/part-001.parquet"]
+
+
+def test_sangraha_source_is_human_partition_and_quarantined() -> None:
+    source = build_sources()["sangraha_verified_sanskrit"]
+
+    assert isinstance(source, HuggingFaceDatasetSource)
+    assert source.path_prefix == "verified/san"
+    assert source.record.release_status == "needs_audit"
+    assert "synthetic" not in source.path_prefix
+
+    unverified = build_sources()["sangraha_unverified_sanskrit"]
+    synthetic = build_sources()["sangraha_synthetic_sanskrit_deva"]
+    assert isinstance(unverified, HuggingFaceDatasetSource)
+    assert isinstance(synthetic, HuggingFaceDatasetSource)
+    assert unverified.path_prefix == "unverified/san"
+    assert synthetic.path_prefix == "synthetic/san_Deva"
+    assert synthetic.record.release_status == "synthetic"
 
 
 def test_git_and_unavailable_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

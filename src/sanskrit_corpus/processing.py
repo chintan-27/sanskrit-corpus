@@ -13,8 +13,10 @@ from dataclasses import dataclass
 from html import unescape
 from itertools import zip_longest
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
+import pyarrow.parquet as pq
 from indic_transliteration import sanscript  # type: ignore[import-untyped]
 
 from . import __version__
@@ -70,6 +72,9 @@ def transliterate_iast_to_devanagari(text: str) -> str:
 
 def process_sources(root: Path, source_id: str = "all", force: bool = False, limit: int | None = None) -> list[ProcessResult]:
     processors = {
+        "sangraha_verified_sanskrit": process_sangraha_verified_sanskrit,
+        "sangraha_unverified_sanskrit": process_sangraha_unverified_sanskrit,
+        "sangraha_synthetic_sanskrit_deva": process_sangraha_synthetic_sanskrit_deva,
         "itihasa": process_itihasa,
         "ud_sanskrit_vedic": process_ud_sanskrit_vedic,
         "naamah": process_naamah,
@@ -183,6 +188,80 @@ def _source_metadata(source_id: str) -> dict[str, str]:
     }
 
 
+def process_sangraha_verified_sanskrit(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
+    return _process_sangraha_partition(root, "sangraha_verified_sanskrit", "verified/san", "sa-Deva", force, limit)
+
+
+def process_sangraha_unverified_sanskrit(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
+    return _process_sangraha_partition(root, "sangraha_unverified_sanskrit", "unverified/san", "sa-Deva", force, limit)
+
+
+def process_sangraha_synthetic_sanskrit_deva(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
+    return _process_sangraha_partition(root, "sangraha_synthetic_sanskrit_deva", "synthetic/san_Deva", "sa-Deva", force, limit)
+
+
+def _process_sangraha_partition(
+    root: Path,
+    source_id: str,
+    partition: str,
+    text_lang: str,
+    force: bool,
+    limit: int | None,
+) -> ProcessResult:
+    raw_dir = root / "data" / "raw" / source_id / partition
+    output = _output_path(root, source_id, force)
+    metadata = _source_metadata(source_id)
+    count = 0
+
+    for parquet_path in sorted(raw_dir.glob("*.parquet")):
+        relative_path = parquet_path.relative_to(root / "data" / "raw" / source_id).as_posix()
+        parquet = pq.ParquetFile(parquet_path)
+        available = set(parquet.schema_arrow.names)
+        if "text" not in available:
+            raise ValueError(f"Sangraha shard lacks required text column: {relative_path}")
+        columns = [column for column in ("doc_id", "type", "text") if column in available]
+        row_number = 0
+        for batch in parquet.iter_batches(batch_size=1024, columns=columns):
+            rows = []
+            for payload in batch.to_pylist():
+                row_number += 1
+                text = normalize_text(str(payload.get("text") or ""))
+                if not text:
+                    continue
+                document_id = str(payload.get("doc_id") or row_number)
+                rows.append(
+                    {
+                        "record_id": f"{source_id}:{relative_path}:{document_id}",
+                        "source_id": source_id,
+                        "record_type": "corpus_document",
+                        "text": text,
+                        "text_lang": text_lang,
+                        "source_path": relative_path,
+                        "source_document_id": document_id,
+                        "source_material_type": str(payload.get("type") or "unknown"),
+                        "corpus_partition": partition,
+                        "provenance_class": _sangraha_provenance_class(partition),
+                        "normalization": ["unicode_nfc", "whitespace_squeeze"],
+                        **metadata,
+                    }
+                )
+                count += 1
+                if limit is not None and count >= limit:
+                    append_jsonl(output, rows)
+                    return ProcessResult(source_id, "ok", str(output), count)
+            append_jsonl(output, rows)
+
+    return ProcessResult(source_id, "ok", str(output), count)
+
+
+def _sangraha_provenance_class(partition: str) -> str:
+    if partition == "verified/san":
+        return "human_source_verified"
+    if partition == "unverified/san":
+        return "human_source_unverified"
+    return "synthetic_translation"
+
+
 def process_itihasa(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
     source_id = "itihasa"
     raw_dir = root / "data" / "raw" / source_id
@@ -243,10 +322,11 @@ def process_ud_sanskrit_vedic(root: Path, force: bool = False, limit: int | None
             continue
         rows = []
         for sentence in _read_conllu_sentences(path):
-            text_latn = normalize_text(sentence.get("text", ""))
+            text_latn = normalize_text(str(sentence.get("text", "")))
             if not text_latn:
                 continue
             text = transliterate_iast_to_devanagari(text_latn)
+            tokens = [_normalize_ud_token(token) for token in sentence.get("tokens", [])]
             count += 1
             sent_id = sentence.get("sent_id", str(count))
             rows.append(
@@ -259,6 +339,7 @@ def process_ud_sanskrit_vedic(root: Path, force: bool = False, limit: int | None
                     "text_lang": "sa-Deva",
                     "text_latn": text_latn,
                     "text_latn_scheme": "IAST",
+                    "tokens": tokens,
                     "sent_id": sent_id,
                     "citation_text": sentence.get("citation_text"),
                     "citation_chapter": sentence.get("citation_chapter"),
@@ -275,21 +356,66 @@ def process_ud_sanskrit_vedic(root: Path, force: bool = False, limit: int | None
     return ProcessResult(source_id, "ok", str(output), count)
 
 
-def _read_conllu_sentences(path: Path) -> Iterable[dict[str, str]]:
-    current: dict[str, str] = {}
+def _read_conllu_sentences(path: Path) -> Iterable[dict[str, Any]]:
+    current: dict[str, Any] = {"tokens": []}
     with path.open(encoding="utf-8") as handle:
         for line in handle:
             line = line.rstrip("\n")
             if not line:
-                if current:
+                if current["tokens"] or len(current) > 1:
                     yield current
-                    current = {}
+                    current = {"tokens": []}
                 continue
             if line.startswith("# ") and " = " in line:
                 key, value = line[2:].split(" = ", 1)
                 current[key] = value
-        if current:
+                continue
+            if line.startswith("#"):
+                continue
+            columns = line.split("\t")
+            if len(columns) != 10:
+                continue
+            token_id, form, lemma, upos, xpos, feats, head, deprel, deps, misc = columns
+            if "-" in token_id:
+                continue
+            current["tokens"].append(
+                {
+                    "id": token_id,
+                    "form": form,
+                    "lemma": lemma,
+                    "upos": upos,
+                    "xpos": xpos,
+                    "feats": _parse_conllu_attributes(feats),
+                    "head": head,
+                    "deprel": deprel,
+                    "deps": deps,
+                    "misc": _parse_conllu_attributes(misc),
+                }
+            )
+        if current["tokens"] or len(current) > 1:
             yield current
+
+
+def _parse_conllu_attributes(value: str) -> dict[str, str]:
+    if value == "_":
+        return {}
+    attributes: dict[str, str] = {}
+    for item in value.split("|"):
+        key, separator, attribute_value = item.partition("=")
+        attributes[key] = attribute_value if separator else ""
+    return attributes
+
+
+def _normalize_ud_token(token: dict[str, Any]) -> dict[str, Any]:
+    form_latn = str(token["form"])
+    lemma_latn = str(token["lemma"])
+    return {
+        **token,
+        "form_latn": form_latn,
+        "form": transliterate_iast_to_devanagari(form_latn),
+        "lemma_latn": lemma_latn,
+        "lemma": transliterate_iast_to_devanagari(lemma_latn) if lemma_latn != "_" else None,
+    }
 
 
 def process_naamah(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
@@ -525,7 +651,7 @@ def process_github_oliverhellwig(root: Path, force: bool = False, limit: int | N
         text_title, chapter = _read_dcs_file_metadata(path)
         relative_path = str(path.relative_to(root / "data" / "raw" / source_id))
         for sentence_number, sentence in enumerate(_read_conllu_sentences(path), start=1):
-            text_latn = normalize_text(sentence.get("text", ""))
+            text_latn = normalize_text(str(sentence.get("text", "")))
             if not text_latn:
                 continue
             count += 1

@@ -2,11 +2,40 @@ import bz2
 import json
 from pathlib import Path
 
+import pyarrow as pa
+import pyarrow.parquet as pq
+
 from sanskrit_corpus.processing import clean_html_text, clean_wikitext, normalize_text, process_sources, transliterate_iast_to_devanagari
 
 
 def test_normalize_text() -> None:
     assert normalize_text("  श्री\uFEFF  रामः\n") == "श्री रामः"
+
+
+def test_process_sangraha_verified_sanskrit_fixture(tmp_path: Path) -> None:
+    raw = tmp_path / "data" / "raw" / "sangraha_verified_sanskrit" / "verified" / "san"
+    raw.mkdir(parents=True)
+    pq.write_table(
+        pa.table(
+            {
+                "doc_id": ["doc-1", "doc-2"],
+                "type": ["website", "ocr"],
+                "text": ["  रामः   वनं गच्छति। ", ""],
+            }
+        ),
+        raw / "part-000.parquet",
+    )
+
+    result = process_sources(tmp_path, "sangraha_verified_sanskrit", force=True)[0]
+    row = json.loads((tmp_path / "data" / "processed" / "sangraha_verified_sanskrit.jsonl").read_text(encoding="utf-8"))
+
+    assert result.record_count == 1
+    assert row["text"] == "रामः वनं गच्छति।"
+    assert row["source_document_id"] == "doc-1"
+    assert row["source_material_type"] == "website"
+    assert row["corpus_partition"] == "verified/san"
+    assert row["provenance_class"] == "human_source_verified"
+    assert row["release_status"] == "needs_audit"
 
 
 def test_transliterate_iast_to_devanagari_handles_vedic_lateral() -> None:
@@ -44,7 +73,9 @@ def test_process_ud_fixture(tmp_path: Path) -> None:
     raw = tmp_path / "data" / "raw" / "ud_sanskrit_vedic"
     raw.mkdir(parents=True)
     (raw / "sa_vedic-ud-train.conllu").write_text(
-        "# text = agnim īḷe\n# sent_id = rv-1\n1\tagnim\tagni\tNOUN\t_\t_\t0\troot\t_\t_\n\n",
+        "# text = agnim īḷe\n# sent_id = rv-1\n"
+        "1\tagnim\tagni\tNOUN\t_\tCase=Acc|Number=Sing\t0\troot\t_\t_\n"
+        "2\tīḷe\tīḍ\tVERB\t_\tMood=Ind|Person=1\t1\tconj\t_\t_\n\n",
         encoding="utf-8",
     )
 
@@ -56,6 +87,10 @@ def test_process_ud_fixture(tmp_path: Path) -> None:
     assert row["text"] == "अग्निम् ईळे"
     assert row["text_lang"] == "sa-Deva"
     assert row["text_latn"] == "agnim īḷe"
+    assert row["tokens"][0]["form"] == "अग्निम्"
+    assert row["tokens"][0]["lemma"] == "अग्नि"
+    assert row["tokens"][0]["feats"] == {"Case": "Acc", "Number": "Sing"}
+    assert row["tokens"][1]["deprel"] == "conj"
 
 
 def test_process_naamah_fixture(tmp_path: Path) -> None:
