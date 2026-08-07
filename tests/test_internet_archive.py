@@ -3,7 +3,15 @@ from pathlib import Path
 
 import pytest
 
-from sanskrit_corpus.internet_archive import item_metadata, pull_internet_archive, search_items, select_files
+from sanskrit_corpus.internet_archive import (
+    compact_internet_archive,
+    compact_text_file,
+    item_metadata,
+    load_census_items,
+    pull_internet_archive,
+    search_items,
+    select_files,
+)
 from sanskrit_corpus.sources import DownloadResult
 
 
@@ -50,3 +58,82 @@ def test_internet_archive_api_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
         select_files([], "unknown")
     with pytest.raises(ValueError):
         pull_internet_archive(Path("."), limit=-1)
+
+
+def test_search_items_paginates_without_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    responses = iter(
+        [
+            {"response": {"numFound": 2, "docs": [{"identifier": "one"}]}},
+            {"response": {"numFound": 2, "docs": [{"identifier": "two"}]}},
+        ]
+    )
+    monkeypatch.setattr("sanskrit_corpus.internet_archive.fetch_json", lambda *args, **kwargs: next(responses))
+
+    assert [item["identifier"] for item in search_items("sanskrit", None)] == ["one", "two"]
+
+
+def test_compact_text_file_is_lossless_and_removes_source(tmp_path: Path) -> None:
+    source = tmp_path / "book_djvu.txt"
+    source.write_bytes("संस्कृतम्\n".encode())
+
+    destination, digest = compact_text_file(source)
+
+    import gzip
+    import hashlib
+
+    assert not source.exists()
+    assert gzip.open(destination, "rb").read() == "संस्कृतम्\n".encode()
+    assert digest == hashlib.sha256("संस्कृतम्\n".encode()).hexdigest()
+
+
+def test_restart_skips_an_existing_compacted_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sanskrit_corpus.internet_archive.search_items", lambda query, limit: [{"identifier": "item"}])
+    monkeypatch.setattr(
+        "sanskrit_corpus.internet_archive.item_metadata",
+        lambda identifier: {"files": [{"name": "book_djvu.txt", "size": "4"}]},
+    )
+    item_dir = tmp_path / "data/raw/internet_archive/item"
+    item_dir.mkdir(parents=True)
+    (item_dir / "book_djvu.txt.gz").write_bytes(b"existing")
+
+    result = pull_internet_archive(tmp_path, limit=1, max_gb=None, file_kind="ocr_text", compact_text=True)
+    rows = [json.loads(line) for line in Path(result.manifest_path).read_text(encoding="utf-8").splitlines()]
+
+    assert result.file_count == 1
+    assert rows[0]["status"] == "already_compacted"
+
+
+def test_compaction_deletes_artifacts_only_after_text_is_preserved(tmp_path: Path) -> None:
+    with_text = tmp_path / "data/raw/internet_archive/with_text"
+    without_text = tmp_path / "data/raw/internet_archive/without_text"
+    with_text.mkdir(parents=True)
+    without_text.mkdir(parents=True)
+    (with_text / "book_djvu.txt").write_text("संस्कृतम्", encoding="utf-8")
+    (with_text / "book.pdf").write_bytes(b"pdf")
+    (with_text / "_metadata.json").write_text("{}", encoding="utf-8")
+    (without_text / "book.pdf").write_bytes(b"pdf")
+
+    result = compact_internet_archive(tmp_path, delete_source_artifacts=True)
+
+    assert result.text_file_count == 1
+    assert (with_text / "book_djvu.txt.gz").exists()
+    assert not (with_text / "book.pdf").exists()
+    assert (with_text / "_metadata.json").exists()
+    assert (without_text / "book.pdf").exists()
+
+
+def test_load_census_items_filters_ocr_and_missing_ocr_pdf(tmp_path: Path) -> None:
+    path = tmp_path / "census.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                json.dumps({"identifier": "ocr", "has_ocr": True, "has_usable_pdf": True}),
+                json.dumps({"identifier": "missing", "has_ocr": False, "has_usable_pdf": True}),
+                json.dumps({"identifier": "neither", "has_ocr": False, "has_usable_pdf": False}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert [item["identifier"] for item in load_census_items(path, require_ocr=True)] == ["ocr"]
+    assert [item["identifier"] for item in load_census_items(path, require_pdf_without_ocr=True)] == ["missing"]

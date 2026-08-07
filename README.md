@@ -35,6 +35,8 @@ uv run sanskrit-corpus pull --source sangraha_synthetic_sanskrit_deva --full
 uv run sanskrit-corpus process --source all
 uv run sanskrit-corpus process --source sangraha_verified_sanskrit --limit 100
 uv run sanskrit-corpus process --source itihasa --limit 100 --force
+uv run sanskrit-corpus process --source pe_ocr_sanskrit --force
+uv run sanskrit-corpus process --source roundtrip_ocr_sanskrit --force
 
 uv run sanskrit-corpus quality --source all --limit 1000
 uv run sanskrit-corpus quality --source all --workers 8 --force

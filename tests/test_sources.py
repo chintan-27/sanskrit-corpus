@@ -14,6 +14,7 @@ from sanskrit_corpus.sources import (
     UnavailableSource,
     UrlFileSource,
     ZipArchiveSource,
+    _is_dataset_file,
     _safe_extract,
     build_sources,
     download_file,
@@ -37,8 +38,16 @@ def test_unclear_sources_are_not_releasable() -> None:
     assert sources["sarit_corpus"].record.release_status == "needs_audit"
     assert sources["saamayik"].record.release_status == "needs_audit"
     assert sources["sanskrit_wikisource"].record.release_status == "needs_audit"
+    assert sources["pe_ocr_sanskrit"].record.release_status == "needs_audit"
     assert sources["gyaandweep_shabdkosha"].record.release_status == "needs_audit"
     assert sources["learnsanskrit_grammar"].record.release_status == "restricted"
+    assert sources["fineweb2_sanskrit_deva"].record.release_status == "needs_audit"
+    assert sources["process_venue_sanskrit_ocr"].record.release_status == "needs_audit"
+    assert sources["ud_sanskrit_ufal"].record.release_status == "releasable"
+    assert sources["sanskrit_wiktionary"].record.release_status == "releasable"
+    assert sources["madlad400_sanskrit"].record.release_status == "needs_audit"
+    assert sources["cc100_sanskrit"].record.release_status == "needs_audit"
+    assert sources["culturax_sanskrit"].record.release_status == "needs_audit"
 
 
 def test_synthetic_source_is_quarantined() -> None:
@@ -46,6 +55,7 @@ def test_synthetic_source_is_quarantined() -> None:
 
     assert source.release_status == "synthetic"
     assert source.release_status != "releasable"
+    assert build_sources()["roundtrip_ocr_sanskrit"].record.release_status == "synthetic"
 
 
 def test_safe_extract_rejects_path_traversal(tmp_path: Path) -> None:
@@ -169,6 +179,12 @@ def test_huggingface_source_limits_download_to_partition() -> None:
 
     assert source._select_files(files, sample=True) == ["verified/san/part-000.parquet"]
     assert source._select_files(files, sample=False) == ["verified/san/part-000.parquet", "verified/san/part-001.parquet"]
+
+
+def test_huggingface_source_accepts_compressed_text_data() -> None:
+    assert _is_dataset_file("data/sa/sa_clean_0000.jsonl.gz")
+    assert _is_dataset_file("data/sa.txt.xz")
+    assert not _is_dataset_file("images/page.png")
 
 
 def test_sangraha_source_is_human_partition_and_quarantined() -> None:

@@ -277,7 +277,7 @@ class HuggingFaceDatasetSource(BaseSource):
         data_files = [
             path
             for path in files
-            if Path(path).suffix.lower() in {".json", ".jsonl", ".csv", ".tsv", ".txt", ".parquet"}
+            if _is_dataset_file(path)
             and path not in preferred
         ]
         selected = preferred + data_files
@@ -290,6 +290,11 @@ class HuggingFaceDatasetSource(BaseSource):
         url = f"https://huggingface.co/datasets/{self.repo_id}/resolve/main/{encoded}"
         local_path.parent.mkdir(parents=True, exist_ok=True)
         download_file(url, local_path)
+
+
+def _is_dataset_file(path: str) -> bool:
+    name = path.lower()
+    return name.endswith((".json", ".jsonl", ".csv", ".tsv", ".txt", ".parquet", ".jsonl.gz", ".json.gz", ".txt.gz", ".txt.xz"))
 
 
 class ZipArchiveSource(BaseSource):
@@ -404,6 +409,75 @@ def build_sources() -> dict[str, BaseSource]:
         ),
         HuggingFaceDatasetSource(
             SourceRecord(
+                "pe_ocr_sanskrit",
+                "Sanskrit Post-OCR Correction",
+                "https://huggingface.co/datasets/acomquest/sanskrit-ocr-post-correction",
+                "real_post_ocr_pairs",
+                "huggingface_dataset",
+                "MIT-dataset; underlying-editions-require-audit",
+                "needs_audit",
+                "Real OCR and corrected Sanskrit sentence pairs; preserve upstream splits and audit the 30 source editions.",
+            ),
+            "acomquest/sanskrit-ocr-post-correction",
+        ),
+        HuggingFaceDatasetSource(
+            SourceRecord(
+                "roundtrip_ocr_sanskrit",
+                "RoundTripOCR Sanskrit",
+                "https://huggingface.co/datasets/cfilt/RoundTripOCR-sanskrit",
+                "synthetic_post_ocr_pairs",
+                "huggingface_dataset",
+                "Apache-2.0",
+                "synthetic",
+                "Synthetic OCR/corrected pairs generated across fonts; never mix with real OCR evaluation data.",
+            ),
+            "cfilt/RoundTripOCR-sanskrit",
+        ),
+        HuggingFaceDatasetSource(
+            SourceRecord(
+                "fineweb2_sanskrit_deva",
+                "FineWeb 2 Sanskrit Devanagari",
+                "https://huggingface.co/datasets/HuggingFaceFW/fineweb-2/tree/main/data/san_Deva/train",
+                "filtered_web_corpus",
+                "huggingface_parquet_subset",
+                "ODC-BY-1.0; Common-Crawl-source-terms",
+                "needs_audit",
+                "Sanskrit Devanagari subset only; retain URL provenance and deduplicate against other web corpora.",
+            ),
+            "HuggingFaceFW/fineweb-2",
+            sample_file_limit=1,
+            path_prefix="data/san_Deva/train",
+        ),
+        HuggingFaceDatasetSource(
+            SourceRecord(
+                "madlad400_sanskrit",
+                "MADLAD-400 Sanskrit",
+                "https://huggingface.co/datasets/allenai/MADLAD-400/tree/main/data/sa",
+                "web_corpus_clean_and_noisy",
+                "huggingface_jsonl_subset",
+                "ODC-BY-1.0; Common-Crawl-source-terms",
+                "needs_audit",
+                "Sanskrit clean and noisy shards; keep variants separate and retain URL-level provenance.",
+            ),
+            "allenai/MADLAD-400",
+            sample_file_limit=1,
+            path_prefix="data/sa",
+        ),
+        HuggingFaceDatasetSource(
+            SourceRecord(
+                "process_venue_sanskrit_ocr",
+                "Process Venue Sanskrit OCR Typed Dataset",
+                "https://huggingface.co/datasets/Process-Venue/Sanskrit-OCR-Typed-Dataset",
+                "ocr_image_text_pairs",
+                "huggingface_dataset",
+                "MIT-dataset; image-origins-require-audit",
+                "needs_audit",
+                "Sanskrit image/transcription pairs; audit image origins and preserve upstream splits.",
+            ),
+            "Process-Venue/Sanskrit-OCR-Typed-Dataset",
+        ),
+        HuggingFaceDatasetSource(
+            SourceRecord(
                 "naamah",
                 "akhil2808/Naamah",
                 "https://huggingface.co/datasets/akhil2808/Naamah",
@@ -440,6 +514,19 @@ def build_sources() -> dict[str, BaseSource]:
                 "Vedic Sanskrit Universal Dependencies treebank; attribution and ShareAlike required.",
             ),
             "https://github.com/UniversalDependencies/UD_Sanskrit-Vedic.git",
+        ),
+        GitSource(
+            SourceRecord(
+                "ud_sanskrit_ufal",
+                "UniversalDependencies/UD_Sanskrit-UFAL",
+                "https://github.com/UniversalDependencies/UD_Sanskrit-UFAL",
+                "treebank",
+                "git_clone",
+                "CC-BY-SA-4.0",
+                "releasable",
+                "Classical Sanskrit dependency treebank; preserve attribution and official evaluation splits.",
+            ),
+            "https://github.com/UniversalDependencies/UD_Sanskrit-UFAL.git",
         ),
         GitSource(
             SourceRecord(
@@ -524,6 +611,34 @@ def build_sources() -> dict[str, BaseSource]:
         ),
         UrlFileSource(
             SourceRecord(
+                "sanskrit_wiktionary",
+                "Sanskrit Wiktionary dump",
+                "https://dumps.wikimedia.org/sawiktionary/latest/",
+                "wikimedia_lexical_dump",
+                "url_download",
+                "CC-BY-SA-4.0",
+                "releasable",
+                "Sanskrit lexical entries and examples; preserve revision attribution and ShareAlike requirements.",
+            ),
+            "https://dumps.wikimedia.org/sawiktionary/latest/sawiktionary-latest-pages-articles.xml.bz2",
+            "sawiktionary-latest-pages-articles.xml.bz2",
+        ),
+        UrlFileSource(
+            SourceRecord(
+                "cc100_sanskrit",
+                "CC-100 Sanskrit",
+                "https://data.statmt.org/cc-100/",
+                "common_crawl_monolingual",
+                "url_download",
+                "research-corpus; Common-Crawl-source-terms",
+                "needs_audit",
+                "Sanskrit Common Crawl extraction; deduplicate against FineWeb, CulturaX, MADLAD, and Sangraha.",
+            ),
+            "https://data.statmt.org/cc-100/sa.txt.xz",
+            "sa.txt.xz",
+        ),
+        UrlFileSource(
+            SourceRecord(
                 "gyaandweep_shabdkosha",
                 "Gyaandweep śabda kośaḥ",
                 "https://gyaandweep.com/learn/sanskrit/shabdkosha/",
@@ -560,6 +675,18 @@ def build_sources() -> dict[str, BaseSource]:
                 "needs_audit",
                 "needs_audit",
                 "Requires Kaggle metadata/license verification before automated pull.",
+            )
+        ),
+        UnavailableSource(
+            SourceRecord(
+                "culturax_sanskrit",
+                "CulturaX Sanskrit",
+                "https://huggingface.co/datasets/uonlp/CulturaX",
+                "filtered_web_corpus",
+                "gated_huggingface_dataset",
+                "mC4-and-OSCAR-upstream-terms",
+                "needs_audit",
+                "Requires accepting Hugging Face access conditions and authentication; Sanskrit configuration is sa.",
             )
         ),
         UnavailableSource(

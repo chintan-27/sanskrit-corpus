@@ -76,6 +76,8 @@ def process_sources(root: Path, source_id: str = "all", force: bool = False, lim
         "sangraha_unverified_sanskrit": process_sangraha_unverified_sanskrit,
         "sangraha_synthetic_sanskrit_deva": process_sangraha_synthetic_sanskrit_deva,
         "itihasa": process_itihasa,
+        "pe_ocr_sanskrit": process_pe_ocr_sanskrit,
+        "roundtrip_ocr_sanskrit": process_roundtrip_ocr_sanskrit,
         "ud_sanskrit_vedic": process_ud_sanskrit_vedic,
         "naamah": process_naamah,
         "samhitika_0_0_1": process_samhitika,
@@ -306,6 +308,107 @@ def process_itihasa(root: Path, force: bool = False, limit: int | None = None) -
                     return ProcessResult(source_id, "ok", str(output), count)
         append_jsonl(output, rows)
 
+    return ProcessResult(source_id, "ok", str(output), count)
+
+
+def process_pe_ocr_sanskrit(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
+    source_id = "pe_ocr_sanskrit"
+    raw_dir = root / "data" / "raw" / source_id
+    output = _output_path(root, source_id, force)
+    metadata = _source_metadata(source_id)
+    count = 0
+
+    for split in ("train", "validation", "test", "ood_test"):
+        path = raw_dir / f"{split}.parquet"
+        if not path.exists():
+            continue
+        parquet = pq.ParquetFile(path)
+        required = {"input_text", "target_text"}
+        if not required.issubset(parquet.schema_arrow.names):
+            raise ValueError(f"PE-OCR shard lacks required columns: {path.name}")
+        row_number = 0
+        for batch in parquet.iter_batches(batch_size=2048, columns=sorted(required)):
+            rows = []
+            for payload in batch.to_pylist():
+                row_number += 1
+                ocr_text = normalize_text(str(payload.get("input_text") or ""))
+                corrected_text = normalize_text(str(payload.get("target_text") or ""))
+                if not ocr_text or not corrected_text:
+                    continue
+                rows.append(
+                    {
+                        "record_id": f"{source_id}:{split}:{row_number}",
+                        "source_id": source_id,
+                        "record_type": "post_ocr_pair",
+                        "split": split,
+                        "text": corrected_text,
+                        "text_lang": "sa-Deva",
+                        "ocr_text": ocr_text,
+                        "ocr_text_lang": "sa-Deva",
+                        "source_path": path.name,
+                        "line_number": row_number,
+                        "provenance_class": "real_ocr_human_corrected",
+                        "book_id": None,
+                        "book_split_verification": "unavailable_in_huggingface_mirror",
+                        "normalization": ["unicode_nfc", "whitespace_squeeze"],
+                        **metadata,
+                    }
+                )
+                count += 1
+                if limit is not None and count >= limit:
+                    append_jsonl(output, rows)
+                    return ProcessResult(source_id, "ok", str(output), count)
+            append_jsonl(output, rows)
+    return ProcessResult(source_id, "ok", str(output), count)
+
+
+def process_roundtrip_ocr_sanskrit(root: Path, force: bool = False, limit: int | None = None) -> ProcessResult:
+    source_id = "roundtrip_ocr_sanskrit"
+    raw_dir = root / "data" / "raw" / source_id
+    output = _output_path(root, source_id, force)
+    metadata = _source_metadata(source_id)
+    count = 0
+
+    for filename, split in (("train.csv", "train"), ("val.csv", "validation"), ("test.csv", "test")):
+        path = raw_dir / filename
+        if not path.exists():
+            continue
+        rows = []
+        with path.open(encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            if not {"ocr", "correct", "font"}.issubset(reader.fieldnames or []):
+                raise ValueError(f"RoundTripOCR file lacks required columns: {filename}")
+            for line_number, payload in enumerate(reader, start=2):
+                ocr_text = normalize_text(payload.get("ocr") or "")
+                corrected_text = normalize_text(payload.get("correct") or "")
+                if not ocr_text or not corrected_text:
+                    continue
+                count += 1
+                rows.append(
+                    {
+                        "record_id": f"{source_id}:{split}:{line_number - 1}",
+                        "source_id": source_id,
+                        "record_type": "post_ocr_pair",
+                        "split": split,
+                        "text": corrected_text,
+                        "text_lang": "sa-Deva",
+                        "ocr_text": ocr_text,
+                        "ocr_text_lang": "sa-Deva",
+                        "font": normalize_text(payload.get("font") or "unknown"),
+                        "source_path": filename,
+                        "line_number": line_number,
+                        "provenance_class": "synthetic_ocr_roundtrip",
+                        "normalization": ["unicode_nfc", "whitespace_squeeze"],
+                        **metadata,
+                    }
+                )
+                if len(rows) >= 5000:
+                    append_jsonl(output, rows)
+                    rows = []
+                if limit is not None and count >= limit:
+                    append_jsonl(output, rows)
+                    return ProcessResult(source_id, "ok", str(output), count)
+        append_jsonl(output, rows)
     return ProcessResult(source_id, "ok", str(output), count)
 
 

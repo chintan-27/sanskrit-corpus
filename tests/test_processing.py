@@ -83,6 +83,41 @@ def test_process_itihasa_preserves_unquoted_commas(tmp_path: Path) -> None:
     assert row["translation"] == "Rama, and Sita went to the forest."
 
 
+def test_process_pe_ocr_preserves_noisy_and_corrected_text(tmp_path: Path) -> None:
+    raw = tmp_path / "data" / "raw" / "pe_ocr_sanskrit"
+    raw.mkdir(parents=True)
+    pq.write_table(
+        pa.Table.from_pylist([{"input_text": "राम वनं गच्छात ।", "target_text": "रामः वनं गच्छति ।"}]),
+        raw / "train.parquet",
+    )
+
+    result = process_sources(tmp_path, "pe_ocr_sanskrit", force=True)[0]
+    row = json.loads((tmp_path / "data" / "processed" / "pe_ocr_sanskrit.jsonl").read_text(encoding="utf-8"))
+
+    assert result.record_count == 1
+    assert row["text"] == "रामः वनं गच्छति ।"
+    assert row["ocr_text"] == "राम वनं गच्छात ।"
+    assert row["provenance_class"] == "real_ocr_human_corrected"
+    assert row["book_split_verification"] == "unavailable_in_huggingface_mirror"
+
+
+def test_process_roundtrip_ocr_is_explicitly_synthetic(tmp_path: Path) -> None:
+    raw = tmp_path / "data" / "raw" / "roundtrip_ocr_sanskrit"
+    raw.mkdir(parents=True)
+    (raw / "train.csv").write_text(
+        "ocr,correct,font\nराम वनं गच्छात ।,रामः वनं गच्छति ।,Sanskrit2003\n",
+        encoding="utf-8",
+    )
+
+    result = process_sources(tmp_path, "roundtrip_ocr_sanskrit", force=True)[0]
+    row = json.loads((tmp_path / "data" / "processed" / "roundtrip_ocr_sanskrit.jsonl").read_text(encoding="utf-8"))
+
+    assert result.record_count == 1
+    assert row["font"] == "Sanskrit2003"
+    assert row["provenance_class"] == "synthetic_ocr_roundtrip"
+    assert row["release_status"] == "synthetic"
+
+
 def test_process_ud_fixture(tmp_path: Path) -> None:
     raw = tmp_path / "data" / "raw" / "ud_sanskrit_vedic"
     raw.mkdir(parents=True)

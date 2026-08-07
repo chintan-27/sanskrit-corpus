@@ -7,7 +7,9 @@ from pathlib import Path
 from .curriculum import build_curriculum_manifests
 from .exporting import export_profile, write_audit
 from .grammar import build_grammar_verified
-from .internet_archive import DEFAULT_IA_QUERY, pull_internet_archive
+from .ia_ocr import pull_and_ocr_internet_archive
+from .ia_quality import profile_internet_archive_quality
+from .internet_archive import DEFAULT_IA_QUERY, compact_internet_archive, pull_internet_archive
 from .manifest import append_jsonl, ensure_manifest_dir, write_source_registry
 from .processing import process_sources
 from .quality import profile_sangraha_quality
@@ -27,6 +29,13 @@ def non_negative_float(value: str) -> float:
     parsed = float(value)
     if parsed < 0:
         raise argparse.ArgumentTypeError("must be non-negative")
+    return parsed
+
+
+def positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be positive")
     return parsed
 
 
@@ -84,12 +93,43 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--force", action="store_true", help="Replace an existing release file.")
     export.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
 
-    ia_pull = subparsers.add_parser("ia-pull", help="Pull Internet Archive files with a byte quota.")
+    ia_pull = subparsers.add_parser("ia-pull", help="Pull Internet Archive derivative files.")
     ia_pull.add_argument("--query", default=DEFAULT_IA_QUERY, help="Internet Archive advanced search query.")
-    ia_pull.add_argument("--limit", type=non_negative_int, default=25, help="Maximum archive items to inspect.")
-    ia_pull.add_argument("--max-gb", type=non_negative_float, default=1.0, help="Maximum downloaded bytes in GiB.")
+    ia_pull.add_argument("--limit", type=non_negative_int, default=25, help="Maximum items; use 0 for unlimited.")
+    ia_pull.add_argument("--max-gb", type=non_negative_float, default=1.0, help="Download quota in GiB; use 0 for unlimited.")
     ia_pull.add_argument("--file-kind", default="ocr_text", choices=["ocr_text", "pdf", "all"], help="Derivative files to download.")
+    ia_pull.add_argument("--compact-text", action="store_true", help="Gzip verified OCR text and remove its uncompressed source file.")
+    ia_pull.add_argument("--catalog", type=Path, help="Validated census JSONL; selects items indexed with OCR.")
+    ia_pull.add_argument("--shard-count", type=positive_int, default=1, help="Number of disjoint acquisition workers.")
+    ia_pull.add_argument("--shard-index", type=non_negative_int, default=0, help="Zero-based acquisition shard index.")
     ia_pull.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
+
+    ia_compact = subparsers.add_parser(
+        "ia-compact",
+        help="Compact existing Internet Archive OCR text and optionally remove bulky derivatives.",
+    )
+    ia_compact.add_argument(
+        "--delete-source-artifacts",
+        action="store_true",
+        help="Delete non-text derivatives only from items with successfully preserved OCR text.",
+    )
+    ia_compact.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
+
+    ia_ocr = subparsers.add_parser("ia-ocr-pdf", help="Temporarily download Internet Archive PDFs and OCR them with PaddleOCR Devanagari.")
+    ia_ocr.add_argument("--query", default=DEFAULT_IA_QUERY, help="Internet Archive advanced search query.")
+    ia_ocr.add_argument("--limit", type=non_negative_int, default=0, help="Maximum catalog items; use 0 for unlimited.")
+    ia_ocr.add_argument("--shard-count", type=positive_int, default=1, help="Number of disjoint OCR workers.")
+    ia_ocr.add_argument("--shard-index", type=non_negative_int, default=0, help="Zero-based worker shard index.")
+    ia_ocr.add_argument("--missing-ocr-only", action="store_true", help="Skip items that already provide an OCR text derivative.")
+    ia_ocr.add_argument("--catalog", type=Path, help="Validated census JSONL; selects usable PDFs without indexed OCR.")
+    ia_ocr.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
+
+    ia_quality = subparsers.add_parser("ia-quality", help="Classify Internet Archive OCR passages into conservative quality tiers.")
+    ia_quality.add_argument("--limit", type=non_negative_int, help="Maximum OCR files to profile.")
+    ia_quality.add_argument("--force", action="store_true", help="Replace existing per-file quality sidecars.")
+    ia_quality.add_argument("--shard-count", type=positive_int, default=1, help="Number of disjoint quality workers.")
+    ia_quality.add_argument("--shard-index", type=non_negative_int, default=0, help="Zero-based quality worker index.")
+    ia_quality.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
 
     return parser
 
@@ -145,6 +185,12 @@ def main(argv: list[str] | None = None) -> int:
         return run_export(args)
     if args.command == "ia-pull":
         return run_ia_pull(args)
+    if args.command == "ia-compact":
+        return run_ia_compact(args)
+    if args.command == "ia-ocr-pdf":
+        return run_ia_ocr_pdf(args)
+    if args.command == "ia-quality":
+        return run_ia_quality(args)
     parser.error(f"unsupported command {args.command}")
     return 2
 
@@ -231,15 +277,64 @@ def run_ia_pull(args: argparse.Namespace) -> int:
     result = pull_internet_archive(
         Path(args.root).resolve(),
         query=args.query,
-        limit=args.limit,
-        max_gb=args.max_gb,
+        limit=args.limit or None,
+        max_gb=args.max_gb or None,
         file_kind=args.file_kind,
+        compact_text=args.compact_text,
+        catalog_path=args.catalog,
+        shard_count=args.shard_count,
+        shard_index=args.shard_index,
     )
     print(
         f"{result.status:8} internet_archive -> {result.file_count} files, "
         f"{result.byte_count} bytes, {result.item_count} items"
     )
     print(f"         manifest: {result.manifest_path}")
+    return 0
+
+
+def run_ia_compact(args: argparse.Namespace) -> int:
+    result = compact_internet_archive(Path(args.root).resolve(), delete_source_artifacts=args.delete_source_artifacts)
+    print(
+        f"ok       internet_archive compact -> {result.text_file_count} text files, "
+        f"{result.removed_file_count} source files removed, {result.removed_bytes} bytes released, "
+        f"{result.item_count} items inspected"
+    )
+    print(f"         manifest: {result.manifest_path}")
+    return 0
+
+
+def run_ia_ocr_pdf(args: argparse.Namespace) -> int:
+    result = pull_and_ocr_internet_archive(
+        Path(args.root).resolve(),
+        query=args.query,
+        limit=args.limit or None,
+        shard_count=args.shard_count,
+        shard_index=args.shard_index,
+        missing_ocr_only=args.missing_ocr_only,
+        catalog_path=args.catalog,
+    )
+    print(
+        f"ok       internet_archive PDF OCR -> {result.ocr_count} OCR, {result.skipped_count} skipped, "
+        f"{result.failed_count} failed, {result.item_count} items"
+    )
+    print(f"         manifest: {result.manifest_path}")
+    return 0
+
+
+def run_ia_quality(args: argparse.Namespace) -> int:
+    result = profile_internet_archive_quality(
+        Path(args.root).resolve(),
+        limit=args.limit,
+        force=args.force,
+        shard_count=args.shard_count,
+        shard_index=args.shard_index,
+    )
+    print(
+        f"ok       internet_archive quality -> {result.files_profiled} files, "
+        f"{result.files_skipped} skipped, {result.passages_profiled} passages"
+    )
+    print(f"         summary: {result.summary_path}")
     return 0
 
 

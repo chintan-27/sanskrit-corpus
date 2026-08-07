@@ -28,6 +28,10 @@
     {
       "if": {"properties": {"record_type": {"const": "ner_sentence"}}},
       "then": {"required": ["tokens", "ner_tags"]}
+    },
+    {
+      "if": {"properties": {"record_type": {"const": "post_ocr_pair"}}},
+      "then": {"required": ["ocr_text", "ocr_text_lang", "split", "line_number", "provenance_class"]}
     }
   ],
   "additionalProperties": true

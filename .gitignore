@@ -3,14 +3,7 @@ CLAUDE.md
 deep-research/chatgpt.md
 deep-research/gemini.txt
 
-data/raw/
-data/processed/
-data/releases/
-data/manifests/
-data/reports/
-data/quality/
-data/curriculum/
-data/grammar/
+data/
 
 .venv/
 __pycache__/
