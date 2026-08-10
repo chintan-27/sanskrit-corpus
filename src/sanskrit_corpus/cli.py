@@ -100,6 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
     ia_pull.add_argument("--file-kind", default="ocr_text", choices=["ocr_text", "pdf", "all"], help="Derivative files to download.")
     ia_pull.add_argument("--compact-text", action="store_true", help="Gzip verified OCR text and remove its uncompressed source file.")
     ia_pull.add_argument("--catalog", type=Path, help="Validated census JSONL; selects items indexed with OCR.")
+    ia_pull.add_argument("--completed-index", type=Path, help="Newline-delimited IA identifiers already stored locally.")
     ia_pull.add_argument("--shard-count", type=positive_int, default=1, help="Number of disjoint acquisition workers.")
     ia_pull.add_argument("--shard-index", type=non_negative_int, default=0, help="Zero-based acquisition shard index.")
     ia_pull.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
@@ -282,6 +283,7 @@ def run_ia_pull(args: argparse.Namespace) -> int:
         file_kind=args.file_kind,
         compact_text=args.compact_text,
         catalog_path=args.catalog,
+        completed_index_path=args.completed_index,
         shard_count=args.shard_count,
         shard_index=args.shard_index,
     )

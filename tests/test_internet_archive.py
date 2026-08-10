@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from sanskrit_corpus.internet_archive import (
+    _bounded_local_path,
     compact_internet_archive,
     compact_text_file,
     item_metadata,
@@ -88,10 +89,14 @@ def test_compact_text_file_is_lossless_and_removes_source(tmp_path: Path) -> Non
 
 def test_restart_skips_an_existing_compacted_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sanskrit_corpus.internet_archive.search_items", lambda query, limit: [{"identifier": "item"}])
-    monkeypatch.setattr(
-        "sanskrit_corpus.internet_archive.item_metadata",
-        lambda identifier: {"files": [{"name": "book_djvu.txt", "size": "4"}]},
-    )
+    metadata_calls = 0
+
+    def fake_metadata(identifier: str) -> dict[str, object]:
+        nonlocal metadata_calls
+        metadata_calls += 1
+        return {"files": [{"name": "book_djvu.txt", "size": "4"}]}
+
+    monkeypatch.setattr("sanskrit_corpus.internet_archive.item_metadata", fake_metadata)
     item_dir = tmp_path / "data/raw/internet_archive/item"
     item_dir.mkdir(parents=True)
     (item_dir / "book_djvu.txt.gz").write_bytes(b"existing")
@@ -101,6 +106,7 @@ def test_restart_skips_an_existing_compacted_download(tmp_path: Path, monkeypatc
 
     assert result.file_count == 1
     assert rows[0]["status"] == "already_compacted"
+    assert metadata_calls == 0
 
 
 def test_compaction_deletes_artifacts_only_after_text_is_preserved(tmp_path: Path) -> None:
@@ -137,3 +143,36 @@ def test_load_census_items_filters_ocr_and_missing_ocr_pdf(tmp_path: Path) -> No
 
     assert [item["identifier"] for item in load_census_items(path, require_ocr=True)] == ["ocr"]
     assert [item["identifier"] for item in load_census_items(path, require_pdf_without_ocr=True)] == ["missing"]
+
+
+def test_bounded_local_path_handles_pathological_dotted_names(tmp_path: Path) -> None:
+    name = ".".join(["segment"] * 100) + "_djvu.txt"
+
+    result = _bounded_local_path(tmp_path, name)
+
+    assert len(result.name.encode("utf-8")) <= 180
+    assert result.suffix == ".txt"
+
+
+def test_completed_index_skips_metadata_and_manifest_io(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    catalog = tmp_path / "census.jsonl"
+    catalog.write_text(json.dumps({"identifier": "done", "has_ocr": True}) + "\n", encoding="utf-8")
+    completed = tmp_path / "completed.txt"
+    completed.write_text("done\n", encoding="utf-8")
+
+    def unexpected_metadata(identifier: str) -> dict[str, object]:
+        raise AssertionError("metadata should not be requested for a completed item")
+
+    monkeypatch.setattr("sanskrit_corpus.internet_archive.item_metadata", unexpected_metadata)
+    result = pull_internet_archive(
+        tmp_path,
+        limit=None,
+        max_gb=None,
+        compact_text=True,
+        catalog_path=catalog,
+        completed_index_path=completed,
+    )
+
+    assert result.item_count == 1
+    assert result.file_count == 1
+    assert not Path(result.manifest_path).exists()

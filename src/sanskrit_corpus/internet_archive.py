@@ -40,6 +40,7 @@ def pull_internet_archive(
     file_kind: str = "ocr_text",
     compact_text: bool = False,
     catalog_path: Path | None = None,
+    completed_index_path: Path | None = None,
     shard_count: int = 1,
     shard_index: int = 0,
 ) -> IaPullResult:
@@ -61,9 +62,25 @@ def pull_internet_archive(
     byte_count = 0
     items = load_census_items(catalog_path, require_ocr=True) if catalog_path else search_items(query, limit)
     selected_items = items[:limit] if limit is not None else items
+    completed_identifiers = _load_completed_identifiers(completed_index_path)
     for item in selected_items[shard_index::shard_count]:
         identifier = _safe_component(str(item["identifier"]))
         item_count += 1
+        if identifier in completed_identifiers:
+            file_count += 1
+            continue
+        item_dir = target_root / identifier
+        if compact_text and file_kind == "ocr_text":
+            existing = next(item_dir.rglob("*.txt.gz"), None) if item_dir.exists() else None
+            if existing is not None:
+                downloaded = existing.stat().st_size
+                byte_count += downloaded
+                file_count += 1
+                append_jsonl(
+                    manifest_path,
+                    [_manifest_row(identifier, {"name": existing.name}, "already_compacted", item_dir, downloaded)],
+                )
+                continue
         try:
             metadata = item_metadata(identifier)
         except Exception as exc:
@@ -71,7 +88,6 @@ def pull_internet_archive(
             append_jsonl(manifest_path, [row])
             continue
         selected = select_files(metadata.get("files", []), file_kind)
-        item_dir = target_root / identifier
         item_dir.mkdir(parents=True, exist_ok=True)
         (item_dir / "_metadata.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -100,7 +116,7 @@ def pull_internet_archive(
                 remaining = max_bytes - byte_count if max_bytes is not None else None
                 url = f"https://archive.org/download/{urllib.parse.quote(identifier)}/{urllib.parse.quote(name)}"
                 try:
-                    result = download_file(url, local_path, timeout=300, max_bytes=remaining)
+                    result = download_file(url, local_path, timeout=30, max_bytes=remaining, total_timeout=180)
                 except Exception as exc:
                     append_jsonl(manifest_path, [_manifest_row(identifier, file_info, f"failed:{exc}", item_dir, 0)])
                     continue
@@ -116,6 +132,13 @@ def pull_internet_archive(
             break
 
     return IaPullResult("ok", item_count, file_count, byte_count, str(manifest_path))
+
+
+def _load_completed_identifiers(path: Path | None) -> set[str]:
+    if path is None:
+        return set()
+    with path.open(encoding="utf-8") as source:
+        return {line.strip() for line in source if line.strip()}
 
 
 def load_census_items(path: Path, require_ocr: bool = False, require_pdf_without_ocr: bool = False) -> list[dict[str, Any]]:
@@ -234,7 +257,7 @@ def search_items(query: str, limit: int | None) -> list[dict[str, Any]]:
 
 
 def item_metadata(identifier: str) -> dict[str, Any]:
-    payload = fetch_json(f"https://archive.org/metadata/{urllib.parse.quote(identifier)}", timeout=120)
+    payload = fetch_json(f"https://archive.org/metadata/{urllib.parse.quote(identifier)}", timeout=30)
     if not isinstance(payload, dict):
         raise RuntimeError(f"unexpected metadata response for {identifier}")
     return payload
@@ -285,9 +308,14 @@ def _bounded_local_path(item_dir: Path, name: str, max_name_bytes: int = 180) ->
     if len(path.name.encode("utf-8")) <= max_name_bytes:
         return item_dir / path
     digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:16]
-    suffixes = "".join(path.suffixes)
-    budget = max_name_bytes - len(f".{digest}{suffixes}".encode())
+    # IA occasionally exposes names containing hundreds of dot-separated
+    # components. Joining every apparent suffix can exceed the filename limit
+    # by itself and previously made the truncation loop non-terminating.
+    suffix = path.suffix
+    budget = max_name_bytes - len(f".{digest}{suffix}".encode())
+    if budget < 1:
+        raise ValueError(f"max_name_bytes is too small for a bounded filename: {max_name_bytes}")
     stem = path.name[:budget]
     while len(stem.encode("utf-8")) > budget:
         stem = stem[:-1]
-    return item_dir / path.parent / f"{stem}.{digest}{suffixes}"
+    return item_dir / path.parent / f"{stem}.{digest}{suffix}"

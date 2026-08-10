@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -63,7 +64,13 @@ class DownloadResult:
     last_modified: str | None
 
 
-def download_file(url: str, destination: Path, timeout: int = 300, max_bytes: int | None = None) -> DownloadResult:
+def download_file(
+    url: str,
+    destination: Path,
+    timeout: int = 300,
+    max_bytes: int | None = None,
+    total_timeout: int | None = None,
+) -> DownloadResult:
     import hashlib
 
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -72,8 +79,12 @@ def download_file(url: str, destination: Path, timeout: int = 300, max_bytes: in
     digest = hashlib.sha256()
     byte_count = 0
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response, temporary.open("wb") as handle:
+        started = time.monotonic()
+        socket_timeout = min(timeout, 30) if total_timeout is not None else timeout
+        with urllib.request.urlopen(request, timeout=socket_timeout) as response, temporary.open("wb") as handle:
             while chunk := response.read(1024 * 1024):
+                if total_timeout is not None and time.monotonic() - started > total_timeout:
+                    raise TimeoutError(f"download from {url} exceeded {total_timeout} seconds")
                 byte_count += len(chunk)
                 if max_bytes is not None and byte_count > max_bytes:
                     raise RuntimeError(f"download from {url} exceeds the {max_bytes}-byte limit")
