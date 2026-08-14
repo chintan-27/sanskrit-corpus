@@ -31,7 +31,7 @@ This is the acquisition backlog for human-authored Sanskrit, aligned translation
 | Priority | Source | Material | Access / posture |
 |---|---|---|---|
 | P0 | [Digital Corpus of Sanskrit (DCS)](https://github.com/OliverHellwig/sanskrit) | Roughly 250 works, 650k lines/sentences and 4.5M morphologically analyzed word references. | CoNLL-U/GitHub, CC BY 4.0; overlaps GRETIL. |
-| P0 | [GRETIL](https://gretil.sub.uni-goettingen.de/gretil.html) | Largest general repository of machine-readable Indological and Sanskrit texts. | Cumulative TEI download is CC BY-NC-SA 4.0; restricted. |
+| P0 | [GRETIL](https://gretil.sub.uni-goettingen.de/gretil.html) | Largest general repository of machine-readable Indological and Sanskrit texts. | Include in scholarly, noncommercial research with provenance. GRETIL excludes commercial use and leaves copyright with original holders; notices may vary by file. Re-review before commercial use or release. |
 | P0 | [SARIT](https://github.com/sarit/SARIT-corpus) | Approximately 80–90 scholarly TEI texts with rich structure and edition metadata. | Audit TEI headers per file; commonly ShareAlike. |
 | P0 | [Sanskrit Documents](https://sanskritdocuments.org/) | Large community collection of Devanagari and transliterated e-texts plus scan indexes. | Mixed provenance and permissions; audit per item. |
 | P0 | [VedaWeb](https://vedaweb.uni-koeln.de/rigveda/) | Curated, accented and annotated Ṛgveda, Brāhmaṇas, and Atharvaveda resources. | Open-access interface; obtain data license/API permission before bulk use. |

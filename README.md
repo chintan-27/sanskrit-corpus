@@ -75,6 +75,10 @@ Release statuses are:
 
 Unknown or ambiguous terms always remain `needs_audit`. This registry records project policy and evidence; it is not legal advice.
 
+Research-training eligibility is tracked separately from corpus-export eligibility. See
+[`deep-research/training-data-decisions.md`](deep-research/training-data-decisions.md) for the measured token census, dataset roles, evaluation
+isolation requirements, GRETIL research-use decision, synthetic lineage policy, and future commercialization review triggers.
+
 ## Adding a Source
 
 Add its `SourceRecord` and acquisition adapter in `sources.py`, a processor and dispatch entry in `processing.py`, fixture tests, and any reviewed evidence in `license_policy.json`. Use `needs_audit` unless the exact downloaded artifacts have authoritative license evidence.
